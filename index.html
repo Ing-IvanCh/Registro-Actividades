@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Registro Diario de Actividades</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
+  import {
+    getFirestore, collection as fsCollection, doc as fsDoc, query as fsQuery,
+    where as fsWhere, orderBy as fsOrderBy, limit as fsLimit,
+    onSnapshot as fsOnSnapshot, getDocs as fsGetDocs, getDoc as fsGetDoc,
+    addDoc as fsAddDoc, setDoc as fsSetDoc, updateDoc as fsUpdateDoc, deleteDoc as fsDeleteDoc
+  } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-firestore.js";
+  import {
+    getAuth, signInAnonymously, signInWithEmailAndPassword, signOut, onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
+
+  // --- Configuración de tu proyecto Firebase (dato público, no es una contraseña) ---
+  const firebaseConfig = {
+    apiKey: "AIzaSyD4HPRnO5U7p4wZ4jNfTa9umzeJACM067Y",
+    authDomain: "registro-diario-de-activ-82bbc.firebaseapp.com",
+    projectId: "registro-diario-de-activ-82bbc",
+    storageBucket: "registro-diario-de-activ-82bbc.firebasestorage.app",
+    messagingSenderId: "509408674128",
+    appId: "1:509408674128:web:f857981906324954112c55"
+  };
+  const ADMIN_EMAIL = "ivan.chipiaje@prosolutions-int.com";
+  const fbApp = initializeApp(firebaseConfig);
+  const firestoreDb = getFirestore(fbApp);
+  const fbAuth = getAuth(fbApp);
+
+  window.__firebaseAuth = {
+    async ensureSignedIn(){
+      if(!fbAuth.currentUser){ await signInAnonymously(fbAuth); }
+    },
+    async loginAdmin(email, password){
+      await signInWithEmailAndPassword(fbAuth, email, password);
+    },
+    async logoutAdmin(){
+      await signOut(fbAuth);
+      await signInAnonymously(fbAuth);
+    },
+    isAdminNow(){
+      const u = fbAuth.currentUser;
+      return !!(u && !u.isAnonymous && u.email === ADMIN_EMAIL);
+    },
+    onChange(cb){ onAuthStateChanged(fbAuth, cb); }
+  };
+
+  // --- Adaptador: expone la misma API encadenable (db.collection/db.doc) que ya usa la app ---
+  function wrapDoc(ref){
+    return {
+      async get(){ const snap = await fsGetDoc(ref); return { exists: snap.exists(), data: ()=>snap.data() }; },
+      async set(data){ return fsSetDoc(ref, data); },
+      async update(data){ return fsUpdateDoc(ref, data); },
+      async delete(){ return fsDeleteDoc(ref); },
+      onSnapshot(cb, errCb){
+        return fsOnSnapshot(ref, snap=> cb({ exists: snap.exists(), data: ()=>snap.data() }), errCb);
+      }
+    };
+  }
+  function wrapCollection(path){
+    const base = fsCollection(firestoreDb, path);
+    const constraints = [];
+    const self = {
+      where(f,op,v){ constraints.push(fsWhere(f,op,v)); return self; },
+      orderBy(f,dir){ constraints.push(fsOrderBy(f, dir||"asc")); return self; },
+      limit(n){ constraints.push(fsLimit(n)); return self; },
+      async get(){
+        const snap = await fsGetDocs(fsQuery(base, ...constraints));
+        return { docs: snap.docs.map(d=>({ id:d.id, data:()=>d.data() })) };
+      },
+      onSnapshot(cb, errCb){
+        return fsOnSnapshot(fsQuery(base, ...constraints), snap=>{
+          cb({ docs: snap.docs.map(d=>({ id:d.id, data:()=>d.data() })) });
+        }, errCb);
+      },
+      async add(data){ return fsAddDoc(base, data); }
+    };
+    return self;
+  }
+  window.__firebaseDb = {
+    collection: (path)=>wrapCollection(path),
+    doc: (path)=>wrapDoc(fsDoc(firestoreDb, path))
+  };
+</script>
+<style>
+:root{
+  --bg:#f5f7fa; --card:#ffffff; --text:#1f2937; --sub:#6b7280; --border:#e2e8f0;
+  --primary:#1f4e78; --primary-d:#163a5a; --accent:#eef3f8;
+  --ok:#2e7d32; --warn:#b26a00; --bad:#c62828; --badbg:#fde8e8; --warnbg:#fff3d6; --okbg:#e7f3e8;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#13161c; --card:#1b1f27; --text:#e5e7eb; --sub:#9ca3af; --border:#2b313c;
+    --primary:#5b9bd5; --primary-d:#4682b4; --accent:#1f2733;
+    --okbg:#163620; --warnbg:#3a2e10; --badbg:#3a1a1a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#13161c; --card:#1b1f27; --text:#e5e7eb; --sub:#9ca3af; --border:#2b313c;
+  --primary:#5b9bd5; --primary-d:#4682b4; --accent:#1f2733;
+  --okbg:#163620; --warnbg:#3a2e10; --badbg:#3a1a1a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif;}
+.wrap{max-width:900px;margin:0 auto;padding:16px;}
+h1{font-size:18px;color:var(--primary);margin:4px 0 2px}
+.sub{color:var(--sub);font-size:12.5px;margin-bottom:14px}
+.tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.tab{padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:13px;color:var(--text)}
+.tab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.monthbox{margin-left:auto;display:flex;align-items:center;gap:6px;min-width:0}
+.monthbox input{padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:16px;min-width:0;max-width:160px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:12px;font-weight:bold;color:var(--sub);margin:10px 0 4px}
+select,input,textarea{width:100%;max-width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;font-family:inherit}
+textarea{resize:vertical;min-height:50px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-width:0}
+.row2>div{min-width:0}
+@media(max-width:560px){.row2{grid-template-columns:1fr}.monthbox{margin-left:0;width:100%}.monthbox input{max-width:none;flex:1}}
+button.primary{margin-top:14px;width:100%;padding:11px;border:none;border-radius:8px;background:var(--primary);color:#fff;font-size:14px;font-weight:bold;cursor:pointer}
+button.primary:active{background:var(--primary-d)}
+button.secondary{padding:9px 14px;border:1px solid var(--primary);border-radius:8px;background:transparent;color:var(--primary);font-size:13px;font-weight:bold;cursor:pointer}
+button.tiny{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:11.5px;cursor:pointer}
+button.tiny.bad{color:var(--bad);border-color:var(--bad)}
+button.tiny.ok{color:var(--ok);border-color:var(--ok)}
+.msg{margin-top:10px;padding:9px 10px;border-radius:8px;font-size:13px;display:none}
+.msg.bad{background:var(--badbg);color:var(--bad);display:block}
+.msg.ok{background:var(--okbg);color:var(--ok);display:block}
+.hint{font-size:11px;color:var(--sub);margin-top:3px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:7px 6px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+th{color:var(--sub);font-size:11px;text-transform:uppercase}
+.badge{padding:2px 7px;border-radius:10px;font-size:11px;font-weight:bold}
+.b-pend{background:var(--warnbg);color:var(--warn)}
+.b-curso{background:var(--accent);color:var(--primary)}
+.b-comp{background:var(--okbg);color:var(--ok)}
+.b-bloq{background:var(--badbg);color:var(--bad)}
+.b-extra{background:var(--warnbg);color:var(--warn)}
+.b-ausencia{background:var(--accent);color:var(--primary)}
+.del{color:var(--bad);cursor:pointer;font-size:12px;background:none;border:none;padding:0}
+.confirmrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.empty{color:var(--sub);font-size:13px;padding:10px 0}
+.sumcard{padding:10px 0;border-bottom:1px solid var(--border)}
+.sumcard:last-child{border-bottom:none}
+.sumtop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.sumtop-left{flex:1 1 auto;min-width:0}
+.sumtop-right{flex:0 0 auto;text-align:right;white-space:nowrap}
+.sname{font-weight:bold;font-size:14px;overflow-wrap:break-word}
+.smeta{font-size:11.5px;color:var(--sub);margin-top:2px;overflow-wrap:break-word}
+.spct{font-size:16px;font-weight:bold}
+.scroll-x{overflow-x:auto}
+.tasklist{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)}
+.taskrow{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--sub);padding:3px 0}
+.taskrow span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+.taskrow span:last-child{flex:0 0 auto;white-space:nowrap}
+.estrow{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--sub)}
+.estrow input{width:70px;padding:4px 6px;font-size:12px}
+.dl-row{display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.engrow{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.engrow input{padding:6px 8px;font-size:16px;min-width:90px;flex:1 1 120px}
+.admin-note{font-size:11.5px;color:var(--sub);margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <h1>Registro Diario de Actividades</h1>
+  <div class="sub">Área de Proyectos — mismas condiciones que el Excel (máx. 8.5 h/día)</div>
+  <div class="empty">Cargando…</div>
+</div>
+
+<script>
+const ACTIVIDADES = ["Desarrollo de plano","Desarrollo de ingeniería","Servicio remoto","Servicio (en campo)",
+  "Revisión de cronograma","Elaboración de informe","Reunión de seguimiento","Apoyo comercial",
+  "Apoyo administrativo","Capacitación / formación","Gestión documental","Atención a cliente interno",
+  "Planeación de proyecto","Soporte a otra área","Otro (especificar en detalle)"];
+const ESTADOS = ["Pendiente","En curso","Completada","Bloqueada"];
+const MAX_HORAS = 8.5;
+const MAX_EXTRA = 4;
+const TIPOS_HORA = ["Normal","Extra","Vacaciones","Compensatorio","Incapacidad","Permiso","Licencia"];
+const AUSENCIA_TYPES = ["Vacaciones","Compensatorio","Incapacidad","Permiso","Licencia"];
+const TIPO_MAX = { "Normal": MAX_HORAS, "Extra": MAX_EXTRA, "Vacaciones": 8, "Compensatorio": 8, "Incapacidad": 8, "Permiso": 8, "Licencia": 8 };
+const SIN_PROYECTO = "Sin proyecto / servicio activo";
+const POR_DEFINIR = "Por definir";
+const DEFAULT_ENGINEERS = [
+  { name: "Edison A.", cargo: "Ingeniero de Proyectos" },
+  { name: "Nicolas E.", cargo: "Ingeniero de Proyectos" },
+  { name: "Lina A.", cargo: "Ingeniero de Proyectos" },
+  { name: "Martinri S.", cargo: "Ingeniero de Proyectos" },
+];
+
+let db = null, downloadsCap = null, isOwner = false;
+let view = "form";
+let engineersList = [];   // [{id,name,cargo}]
+let projectsList = [];    // [{id,codigo,nombre}]
+let selectedEngineer = localStorage.getItem("ivan_sel_eng") || "";
+let selectedMonth = localStorage.getItem("ivan_sel_month") || todayStr().slice(0,7);
+let myEntries = [];
+let allEntries = [];
+let estimates = {};
+let unsubMine=null, unsubAll=null, unsubEst=null, unsubEng=null, unsubProj=null;
+let formMsg = "", formMsgType = "ok";
+let pendingConfirm = null;
+let editingId = null;
+let editingTaskId = null;
+let selectedTipoHora = "Normal";
+let openTasksList = []; // tareas abiertas del ingeniero seleccionado (de cualquier mes)
+let selectedTaskOption = ""; // "" = nueva tarea, o el id de una tarea existente
+let unsubOpenTasks = null;
+let engSeedInFlight = false;
+
+const app = document.getElementById("app");
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function monthRange(ym){
+  const [y,m] = ym.split("-").map(Number);
+  const start = ym + "-01";
+  const lastDay = new Date(y, m, 0).getDate();
+  const end = ym + "-" + String(lastDay).padStart(2,"0");
+  return {start, end, days: lastDay};
+}
+function badgeClass(estado){
+  return {"Pendiente":"b-pend","En curso":"b-curso","Completada":"b-comp","Bloqueada":"b-bloq"}[estado] || "b-curso";
+}
+function monthLabel(ym){
+  const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const [y,m] = ym.split("-").map(Number);
+  return meses[m-1] + " " + y;
+}
+function sanitizeId(s){
+  return (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9_\-.~:@+]+/g,"_").replace(/^_+|_+$/g,"") || "x";
+}
+function slugify(name){ return sanitizeId(name); }
+function engineerNames(){ return engineersList.map(e=>e.name); }
+function projectOptionLabel(p){ return p.nombre ? `${p.codigo} - ${p.nombre}` : p.codigo; }
+function proyectoCodigo(proyectoStr){
+  const m = String(proyectoStr||"").trim().match(/^(\d{3,})/);
+  return m ? m[1] : null;
+}
+function proyectoCategoria(proyectoStr){
+  if(proyectoStr===SIN_PROYECTO || proyectoStr===POR_DEFINIR || !proyectoStr) return "Apoyo interno / sin código";
+  const cod = proyectoCodigo(proyectoStr);
+  if(!cod) return "Apoyo interno / sin código";
+  const first = cod[0];
+  if(first==="3") return "Proyecto";
+  if(first==="2") return "Servicio";
+  if(first==="0") return "Capacitación";
+  return "Otro";
+}
+
+function render(){
+  app.innerHTML = `
+    <h1>Registro Diario de Actividades</h1>
+    <div class="sub">Área de Proyectos — mismas condiciones que el Excel (máx. ${MAX_HORAS} h/día)</div>
+    <div class="tabs">
+      <div class="tab ${view==='form'?'active':''}" data-tab="form">Registrar / Mis actividades</div>
+      <div class="tab ${view==='resumen'?'active':''}" data-tab="resumen">Resumen general</div>
+      ${isOwner ? `<div class="tab ${view==='equipo'?'active':''}" data-tab="equipo">Equipo (solo tú)</div>` : ""}
+      ${isOwner ? `<div class="tab ${view==='proyectos'?'active':''}" data-tab="proyectos">Proyectos (solo tú)</div>` : ""}
+      ${(view==='form'||view==='resumen') ? `<div class="monthbox"><label style="margin:0">Mes:</label><input type="month" id="month_sel" value="${selectedMonth}"></div>` : ""}
+      <button class="tiny" id="btn_admin_toggle" style="margin-left:auto">${isOwner ? "🔓 Cerrar admin" : "🔒 Admin"}</button>
+    </div>
+    ${view==='form' ? renderForm() : view==='resumen' ? renderResumen() : view==='equipo' ? renderEquipo() : renderProyectos()}
+  `;
+  wireEvents();
+}
+
+function renderForm(){
+  if(!engineersList.length){
+    return `<div class="card"><div class="empty">${isOwner ? "Configurando el equipo por primera vez…" : "El equipo aún no ha sido configurado. Pide al administrador que abra la app primero."}</div></div>`;
+  }
+  const options = engineersList.map(e=>`<option value="${e.name}" ${e.name===selectedEngineer?'selected':''}>${e.name}</option>`).join("");
+  const actOpts = ACTIVIDADES.map(a=>`<option value="${a}">${a}</option>`).join("");
+  const estOpts = ESTADOS.map(e=>`<option value="${e}">${e}</option>`).join("");
+  const proyOpts = [`<option value="${SIN_PROYECTO}">`, `<option value="${POR_DEFINIR}">`]
+    .concat(projectsList.map(p=>`<option value="${projectOptionLabel(p)}">`)).join("");
+  return `
+  <div class="card">
+    <label>Ingeniero</label>
+    <select id="eng_select">${options}</select>
+
+    <form id="entry_form">
+      <div class="row2">
+        <div><label>Fecha</label><input type="date" id="f_fecha" value="${todayStr()}" required></div>
+        <div><label>Tipo de hora</label><select id="f_tipo">${TIPOS_HORA.map(t=>`<option value="${t}" ${t===selectedTipoHora?'selected':''}>${t}</option>`).join("")}</select></div>
+      </div>
+      <div class="hint" id="tipo_hint" style="margin:-6px 0 10px">${tipoHint(selectedTipoHora)}</div>
+      <div id="work_fields" style="${AUSENCIA_TYPES.includes(selectedTipoHora)?'display:none':''}">
+        ${!editingId ? `
+        <label>Tarea <span class="hint">(continúa una tarea abierta o crea una nueva)</span></label>
+        <select id="f_task">
+          <option value="">+ Nueva tarea</option>
+          ${openTasksList.map(t=>`<option value="${t.taskId}" ${t.taskId===selectedTaskOption?'selected':''}>${taskLabel(t)}</option>`).join("")}
+        </select>
+        ` : `<div class="hint" style="margin-bottom:6px">Editando un registro existente — la tarea a la que pertenece no cambia aquí.</div>`}
+        <label>Estado</label>
+        <select id="f_estado"><option value="">Selecciona…</option>${estOpts}</select>
+        <label>Actividad realizada</label>
+        <select id="f_actividad"><option value="">Selecciona…</option>${actOpts}</select>
+        <label>Detalle de la actividad</label>
+        <textarea id="f_detalle" placeholder="Describe qué se hizo exactamente"></textarea>
+        <div class="row2">
+          <div><label>Proyecto / Centro de costo</label><input list="proy_list" id="f_proyecto" placeholder="${SIN_PROYECTO}"><datalist id="proy_list">${proyOpts}</datalist></div>
+          <div><label>% de Avance</label><input type="number" id="f_pct" min="0" max="100" step="1" placeholder="0-100"></div>
+        </div>
+      </div>
+      <label id="horas_label">Horas (máx. ${TIPO_MAX[selectedTipoHora]} h/día${selectedTipoHora==="Normal"?" — no incluye horas extra":""})</label>
+      <input type="number" id="f_horas" min="0" max="${TIPO_MAX[selectedTipoHora]}" step="0.5" required>
+      <label>${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Motivo / observación" : "Observaciones"} <span class="hint">${AUSENCIA_TYPES.includes(selectedTipoHora) ? "(opcional)" : "(solo si hay problemas o bloqueos)"}</span></label>
+      <textarea id="f_obs" placeholder="${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Ej: vacaciones programadas, cita médica, etc." : "Dejar vacío si no hay novedades"}"></textarea>
+      <button type="submit" class="primary">${editingId ? "Guardar cambios" : "Guardar registro"}</button>
+      ${editingId ? `<button type="button" class="secondary" id="btn_cancel_edit" style="width:100%;margin-top:8px">Cancelar edición</button>` : ""}
+      <div class="msg ${formMsgType}" id="msgbox">${formMsg}</div>
+    </form>
+  </div>
+  <div class="card">
+    <div class="sub" style="margin-bottom:8px">Mis actividades — ${selectedEngineer} — ${monthLabel(selectedMonth)}</div>
+    <div class="scroll-x">${renderMyTable()}</div>
+  </div>`;
+}
+
+function renderMyTable(){
+  if(!myEntries.length) return `<div class="empty">Sin registros este mes.</div>`;
+  const rows = myEntries.map(d=>{
+    const confirming = pendingConfirm && pendingConfirm.type==="activity" && pendingConfirm.key===d._id;
+    const delCell = confirming
+      ? `<span class="confirmrow">¿Seguro? <button class="tiny bad" data-act="confirm-del-activity" data-id="${d._id}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
+      : `<button class="tiny" data-act="edit-activity" data-id="${d._id}">Editar</button> <button class="del" data-act="ask-del-activity" data-id="${d._id}">Eliminar</button>`;
+    const isEditing = editingId === d._id;
+    const tipo = d.tipoHora || "Normal";
+    return `<tr${isEditing ? ' style="background:var(--accent)"' : ''}>
+      <td>${d.fecha||""}</td>
+      <td>${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipo}</span>`}</td>
+      <td>${d.actividad||""}</td>
+      <td>${d.detalle||""}</td>
+      <td>${d.proyecto||""}</td>
+      <td>${d.estado?`<span class="badge ${badgeClass(d.estado)}">${d.estado}</span>`:""}</td>
+      <td>${d.pct!=null?d.pct+"%":""}</td>
+      <td>${d.horas!=null?d.horas+" h":""}</td>
+      <td>${d.obs||""}</td>
+      <td>${delCell}</td>
+    </tr>`;
+  }).join("");
+  return `<table><thead><tr><th>Fecha</th><th>Tipo</th><th>Actividad</th><th>Detalle</th><th>Proyecto</th><th>Estado</th><th>%</th><th>Horas</th><th>Observ.</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function taskKey(d){ return d.taskId || ("legacy:: " + (d.proyecto||SIN_PROYECTO) + " :: " + (d.actividad||"(sin definir)")); }
+function newTaskId(){ return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function taskLabel(t){ return `${t.proyecto} · ${t.actividad}${t.detalle?" — "+t.detalle.slice(0,40):""} (${t.pct!=null?t.pct+"%":"—"}, desde ${t.fecha})`; }
+function tipoHint(tipo){
+  if(tipo==="Normal") return `Cuenta para el tope de ${MAX_HORAS} h/día de jornada regular.`;
+  if(tipo==="Extra") return `Horas extra: no cuentan para el tope de ${MAX_HORAS} h — deben marcarse como Extra para poder sumarse aparte (máx. ${MAX_EXTRA} h/día).`;
+  return `Día no laborado (${tipo}): no cuenta para el tope de horas de trabajo, se registra aparte.`;
+}
+
+function computeStats(){
+  const {days} = monthRange(selectedMonth);
+  const weeks = days/7;
+  const byEng = {};
+  engineersList.forEach((e)=>byEng[e.name] = {n:0, horas:0, horasExtra:0, horasAusencia:0, horasPorTipo:{}, last:null, tasks:{}, cargo:e.cargo});
+  allEntries.forEach(d=>{
+    const e = byEng[d.engineer]; if(!e) return;
+    const tipo = d.tipoHora || "Normal";
+    const isWork = !AUSENCIA_TYPES.includes(tipo);
+    e.n++;
+    const h = typeof d.horas === "number" ? d.horas : 0;
+    e.horasPorTipo[tipo] = (e.horasPorTipo[tipo]||0) + h;
+    if(isWork){ e.horas += h; if(tipo==="Extra") e.horasExtra += h; }
+    else { e.horasAusencia += h; }
+    if(d.fecha && (!e.last || d.fecha > e.last)) e.last = d.fecha;
+    if(!isWork) return; // las ausencias (vacaciones, incapacidad, etc.) no son "tareas" con avance
+    // Agrupa por proyecto+actividad (o por id de tarea si lo tiene): una misma línea de trabajo
+    // puede registrarse varios días, y lo que importa es su avance MÁS RECIENTE.
+    const key = taskKey(d);
+    const t = e.tasks[key] || { proyecto: d.proyecto||SIN_PROYECTO, actividad: d.actividad||"(sin definir)", pct:null, estado:null, fecha:null, _sortKey:"" };
+    const sortKey = (d.fecha||"") + "T" + (d.createdAt||"");
+    if(sortKey >= t._sortKey){
+      t._sortKey = sortKey; t.fecha = d.fecha;
+      if(typeof d.pct === "number") t.pct = d.pct;
+      if(d.estado) t.estado = d.estado;
+    }
+    e.tasks[key] = t;
+  });
+  // Avance general = promedio SOLO de las tareas aún abiertas (en curso/pendiente/bloqueada).
+  // Las tareas completadas NO se promedian con las demás: cuentan aparte como logro, así que
+  // terminar una tarea nunca baja el número — en el peor de los casos simplemente sale del promedio.
+  Object.values(byEng).forEach(e=>{
+    const tasksArr = Object.values(e.tasks).sort((a,b)=> (b._sortKey||"").localeCompare(a._sortKey||""));
+    e.taskList = tasksArr;
+    const completadas = tasksArr.filter(t=>t.estado==="Completada");
+    const abiertas = tasksArr.filter(t=>t.estado!=="Completada");
+    const abiertasConPct = abiertas.filter(t=>t.pct!=null);
+    e.completedCount = completadas.length;
+    e.openCount = abiertas.length;
+    if(abiertasConPct.length){
+      e.lastPct = Math.round(abiertasConPct.reduce((s,t)=>s+t.pct,0)/abiertasConPct.length);
+    } else if(completadas.length){
+      e.lastPct = 100; // todo lo que tenía abierto este mes ya quedó completado
+    } else {
+      e.lastPct = null;
+    }
+  });
+  return {byEng, weeks};
+}
+
+function renderResumen(){
+  const {byEng, weeks} = computeStats();
+  const cards = engineersList.map((eng)=>{
+    const e = byEng[eng.name];
+    const avg = e.lastPct;
+    const diasSin = e.last ? Math.round((new Date(todayStr()) - new Date(e.last))/86400000) : null;
+    let estado = "Sin registros", color="var(--bad)";
+    if(e.n>0){
+      if(avg===null) { estado="Sin datos"; color="var(--sub)"; }
+      else if(avg>=80){ estado="Buen ritmo"; color="var(--ok)"; }
+      else if(avg>=40){ estado="En progreso"; color="var(--warn)"; }
+      else { estado="Rezagado"; color="var(--bad)"; }
+    }
+    const alerta = diasSin!==null && diasSin>5 ? ` · <span style="color:var(--bad)">${diasSin} días sin actualizar</span>` : "";
+    const estKey = slugify(eng.name);
+    const estVal = estimates[estKey]!=null ? estimates[estKey] : "";
+    const estWeeklyNum = estimates[estKey]!=null ? Number(estimates[estKey]) : null;
+    const estMes = estWeeklyNum!=null ? (estWeeklyNum*weeks).toFixed(1) : null;
+    const diff = estMes!=null ? (e.horas - estMes).toFixed(1) : null;
+    return `<div class="sumcard">
+      <div class="sumtop">
+        <div class="sumtop-left">
+          <div class="sname">${eng.name}</div>
+          <div class="smeta">${e.n} registros · ${e.horas.toFixed(1)} h trabajadas${e.horasExtra>0?` (${e.horasExtra.toFixed(1)} extra)`:""} · última: ${e.last||"—"}${alerta}</div>
+          ${e.horasAusencia>0?`<div class="smeta">${Object.keys(e.horasPorTipo).filter(t=>AUSENCIA_TYPES.includes(t)).map(t=>`${t}: ${e.horasPorTipo[t].toFixed(1)} h`).join(" · ")}</div>`:""}
+          ${estMes!=null?`<div class="smeta">Estimado del mes: ${estMes} h · Diferencia: ${diff>=0?"+":""}${diff} h</div>`:""}
+        </div>
+        <div class="sumtop-right">
+          <div class="spct" style="color:${color}">${avg!==null?avg+"%":"—"}</div>
+          <div class="smeta" style="color:${color}">${estado}</div>
+          <div class="smeta">${e.openCount>0 ? `${e.openCount} en curso` : "sin tareas abiertas"}</div>
+          ${e.completedCount>0 ? `<div class="smeta" style="color:var(--ok)">✓ ${e.completedCount} completada(s)</div>` : ""}
+        </div>
+      </div>
+      ${e.taskList.length ? `<div class="tasklist">${e.taskList.map(t=>
+          `<div class="taskrow"><span>${t.proyecto} · ${t.actividad}</span><span><span class="badge ${badgeClass(t.estado)}">${t.estado||""}</span> ${t.pct!=null?t.pct+"%":"—"}</span></div>`
+        ).join("")}</div>` : ""}
+      <div class="estrow">Horas estimadas/semana: <input type="number" min="0" step="0.5" class="est_input" data-eng="${estKey}" value="${estVal}" placeholder="ej. 40"></div>
+    </div>`;
+  }).join("");
+  return `
+  <div class="dl-row">
+    <button class="secondary" id="btn_download_word">📄 Descargar informe del mes (Word)</button>
+    <button class="secondary" id="btn_download_csv">⬇ CSV (datos crudos)</button>
+  </div>
+  <div class="card">${cards || '<div class="empty">Sin ingenieros configurados.</div>'}</div>
+  <div class="msg ${formMsgType}" id="msgbox2" style="margin-top:-6px">${formMsg}</div>`;
+}
+
+function renderEquipo(){
+  const rows = engineersList.map((e,i)=>{
+    const confirmingDel = pendingConfirm && pendingConfirm.type==="deleteEngineer" && pendingConfirm.key===i;
+    const confirmingRen = pendingConfirm && pendingConfirm.type==="renameEngineer" && pendingConfirm.key===i;
+    if(confirmingRen){
+      return `<div class="engrow">
+        <span class="confirmrow">Renombrar <b>${pendingConfirm.oldName}</b> → <b>${pendingConfirm.name}</b> y actualizar registros históricos. ¿Confirmas?
+        <button class="tiny ok" data-act="confirm-rename" data-i="${i}">Sí, actualizar</button>
+        <button class="tiny" data-act="cancel-confirm">Cancelar</button></span>
+      </div>`;
+    }
+    return `<div class="engrow">
+      <input data-i="${i}" class="eq_name" value="${e.name}" style="flex:2">
+      <input data-i="${i}" class="eq_cargo" value="${e.cargo||''}" style="flex:2">
+      <button class="tiny" data-act="save-engineer" data-i="${i}">Guardar</button>
+      ${confirmingDel
+        ? `<span class="confirmrow">¿Eliminar? <button class="tiny bad" data-act="confirm-del-engineer" data-i="${i}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
+        : `<button class="tiny bad" data-act="ask-del-engineer" data-i="${i}">Eliminar</button>`}
+    </div>`;
+  }).join("");
+  return `
+  <div class="card">
+    <div class="admin-note">Esta sección solo la ves tú (el dueño del documento). Cada ingeniero es un registro independiente, así que agregar, renombrar o eliminar a uno nunca afecta a los demás. Renombrar actualiza también sus registros históricos. Eliminar no borra el historial, solo lo quita de la lista para nuevos registros.</div>
+    ${rows || '<div class="empty">Sin ingenieros todavía.</div>'}
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <label>Agregar nuevo ingeniero</label>
+      <div class="row2">
+        <input id="new_eng_name" placeholder="Nombre">
+        <input id="new_eng_cargo" placeholder="Cargo" value="Ingeniero de Proyectos">
+      </div>
+      <button class="primary" id="btn_add_eng">Agregar</button>
+    </div>
+    <div class="msg ${formMsgType}" id="msgbox3" style="margin-top:10px">${formMsg}</div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <label>Datos de respaldo (traídos desde la app en Claude)</label>
+      <div class="hint" style="margin-bottom:8px">Úsalo UNA sola vez, recién estrenada esta base de datos. Si lo corres dos veces, duplica los registros.</div>
+      <button class="secondary" id="btn_import_seed">Importar datos de respaldo</button>
+    </div>
+  </div>`;
+}
+
+function renderProyectos(){
+  const rows = projectsList.map((p,i)=>{
+    const confirmingDel = pendingConfirm && pendingConfirm.type==="deleteProject" && pendingConfirm.key===i;
+    return `<div class="engrow">
+      <input data-i="${i}" class="pr_codigo" value="${p.codigo}" placeholder="Código" style="flex:1">
+      <input data-i="${i}" class="pr_nombre" value="${p.nombre||''}" placeholder="Nombre del proyecto" style="flex:2">
+      <button class="tiny" data-act="save-project" data-i="${i}">Guardar</button>
+      ${confirmingDel
+        ? `<span class="confirmrow">¿Eliminar? <button class="tiny bad" data-act="confirm-del-project" data-i="${i}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
+        : `<button class="tiny bad" data-act="ask-del-project" data-i="${i}">Eliminar</button>`}
+    </div>`;
+  }).join("");
+  return `
+  <div class="card">
+    <div class="admin-note">Esta sección solo la ves tú. Cada proyecto es un registro independiente (no se pisan entre sí). Aparecen como sugerencia en "Proyecto / Centro de costo" al registrar actividades; los ingenieros también pueden escribir uno nuevo libremente.<br><b>Convención de códigos</b> (para que el informe clasifique bien): <b>3XXX</b> = Proyectos · <b>2XXX</b> = Servicios · <b>0XXX</b> = Capacitaciones. Un código que no empiece así se reporta como "Otro".</div>
+    ${rows || '<div class="empty">Sin proyectos configurados todavía.</div>'}
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <label>Agregar nuevo proyecto</label>
+      <div class="row2">
+        <input id="new_pr_codigo" placeholder="Código (ej. 3051)">
+        <input id="new_pr_nombre" placeholder="Nombre del proyecto">
+      </div>
+      <button class="primary" id="btn_add_pr">Agregar</button>
+    </div>
+    <div class="msg ${formMsgType}" id="msgbox3" style="margin-top:10px">${formMsg}</div>
+  </div>`;
+}
+
+function showMsg(text, type){
+  formMsg = text; formMsgType = type;
+  const box = document.getElementById("msgbox") || document.getElementById("msgbox2") || document.getElementById("msgbox3");
+  if(box){ box.textContent = text; box.className = "msg " + type; }
+}
+
+function wireEvents(){
+  document.querySelectorAll(".tab").forEach(t=>{
+    t.onclick = ()=>{ view = t.dataset.tab; pendingConfirm = null; render(); };
+  });
+  const btnAdminToggle = document.getElementById("btn_admin_toggle");
+  if(btnAdminToggle) btnAdminToggle.onclick = ()=>{ isOwner ? lockAdmin() : tryUnlockAdmin(); };
+  const monthSel = document.getElementById("month_sel");
+  if(monthSel) monthSel.onchange = (e)=>{
+    selectedMonth = e.target.value;
+    localStorage.setItem("ivan_sel_month", selectedMonth);
+    subscribeMine(); subscribeAll(); render();
+  };
+  const engSel = document.getElementById("eng_select");
+  if(engSel) engSel.onchange = (e)=>{
+    selectedEngineer = e.target.value;
+    localStorage.setItem("ivan_sel_eng", selectedEngineer);
+    selectedTaskOption = "";
+    subscribeMine(); subscribeOpenTasks(); render();
+  };
+  const form = document.getElementById("entry_form");
+  if(form) form.onsubmit = onSubmit;
+  const btnCancelEdit = document.getElementById("btn_cancel_edit");
+  if(btnCancelEdit) btnCancelEdit.onclick = ()=>{
+    editingId = null; editingTaskId = null;
+    render();
+    const f = document.getElementById("f_fecha");
+    if(f) f.value = todayStr();
+  };
+  const tipoSel = document.getElementById("f_tipo");
+  if(tipoSel) tipoSel.onchange = (e)=>{
+    selectedTipoHora = e.target.value;
+    render();
+    const horasEl = document.getElementById("f_horas");
+    if(horasEl && AUSENCIA_TYPES.includes(selectedTipoHora) && !horasEl.value){ horasEl.value = 8; }
+  };
+  // required dinámico: los campos de trabajo no son obligatorios si el tipo de hora es una ausencia
+  const isWork = !AUSENCIA_TYPES.includes(selectedTipoHora);
+  ["f_estado","f_actividad","f_detalle","f_pct"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.required = isWork;
+  });
+  const taskSel = document.getElementById("f_task");
+  if(taskSel) taskSel.onchange = (e)=>{
+    selectedTaskOption = e.target.value;
+    const actEl = document.getElementById("f_actividad");
+    const detEl = document.getElementById("f_detalle");
+    const proyEl = document.getElementById("f_proyecto");
+    const estEl = document.getElementById("f_estado");
+    const pctEl = document.getElementById("f_pct");
+    if(selectedTaskOption){
+      const t = openTasksList.find(x=>x.taskId===selectedTaskOption);
+      if(t){
+        if(actEl) actEl.value = t.actividad||"";
+        if(detEl) detEl.value = t.detalle||"";
+        if(proyEl) proyEl.value = t.proyecto||"";
+        if(estEl) estEl.value = (t.estado==="Bloqueada") ? "En curso" : (t.estado||"");
+        if(pctEl) pctEl.value = t.pct!=null?t.pct:"";
+      }
+    } else {
+      if(actEl) actEl.value = ""; if(detEl) detEl.value = ""; if(proyEl) proyEl.value = "";
+      if(estEl) estEl.value = ""; if(pctEl) pctEl.value = "";
+    }
+  };
+  const estSel = document.getElementById("f_estado");
+  if(estSel) estSel.addEventListener("change", (e)=>{
+    if(e.target.value === "Completada"){
+      const pctEl = document.getElementById("f_pct");
+      if(pctEl && !pctEl.value) pctEl.value = 100;
+    }
+  });
+
+  document.querySelectorAll("[data-act]").forEach(b=>{
+    b.onclick = ()=>handleAction(b.dataset.act, b.dataset);
+  });
+
+  const btnWord = document.getElementById("btn_download_word");
+  if(btnWord) btnWord.onclick = downloadWordReport;
+  const btnCsv = document.getElementById("btn_download_csv");
+  if(btnCsv) btnCsv.onclick = downloadCsvReport;
+
+  document.querySelectorAll(".est_input").forEach(inp=>{
+    inp.onchange = async (e)=>{
+      if(!db) return;
+      const key = e.target.dataset.eng;
+      const val = Number(e.target.value)||0;
+      try{ await db.doc("config/estimates").set({...estimates, [key]: val}); }
+      catch(err){ showMsg("No se pudo guardar el estimado: "+(err.message||err.code), "bad"); }
+    };
+  });
+
+  const btnAddEng = document.getElementById("btn_add_eng");
+  if(btnAddEng) btnAddEng.onclick = addEngineer;
+  const btnImportSeed = document.getElementById("btn_import_seed");
+  if(btnImportSeed) btnImportSeed.onclick = importSeedData;
+  const btnAddPr = document.getElementById("btn_add_pr");
+  if(btnAddPr) btnAddPr.onclick = addProject;
+}
+
+async function handleAction(act, ds){
+  if(act === "cancel-confirm"){ pendingConfirm = null; render(); return; }
+
+  if(act === "ask-del-activity"){ pendingConfirm = {type:"activity", key: ds.id}; render(); return; }
+  if(act === "confirm-del-activity"){
+    pendingConfirm = null;
+    try{ await db.doc("activities/"+ds.id).delete(); showMsg("Registro eliminado.", "ok"); }
+    catch(err){ showMsg("No se pudo eliminar: " + (err.message||err.code), "bad"); render(); }
+    return;
+  }
+  if(act === "edit-activity"){
+    const d = myEntries.find(e=>e._id===ds.id);
+    if(!d) return;
+    editingId = ds.id;
+    editingTaskId = d.taskId || null;
+    selectedTipoHora = d.tipoHora || "Normal";
+    render();
+    document.getElementById("f_fecha").value = d.fecha||"";
+    document.getElementById("f_tipo").value = selectedTipoHora;
+    document.getElementById("f_actividad").value = AUSENCIA_TYPES.includes(selectedTipoHora) ? "" : (d.actividad||"");
+    document.getElementById("f_detalle").value = AUSENCIA_TYPES.includes(selectedTipoHora) ? "" : (d.detalle||"");
+    document.getElementById("f_proyecto").value = AUSENCIA_TYPES.includes(selectedTipoHora) ? "" : (d.proyecto||"");
+    document.getElementById("f_estado").value = d.estado||"";
+    document.getElementById("f_pct").value = d.pct!=null?d.pct:"";
+    document.getElementById("f_horas").value = d.horas!=null?d.horas:"";
+    document.getElementById("f_obs").value = d.obs||"";
+    document.getElementById("entry_form").scrollIntoView({behavior:"smooth", block:"start"});
+    return;
+  }
+
+  if(act === "save-engineer"){ await trySaveEngineer(Number(ds.i)); return; }
+  if(act === "ask-del-engineer"){ pendingConfirm = {type:"deleteEngineer", key: Number(ds.i)}; render(); return; }
+  if(act === "confirm-del-engineer"){ await doDeleteEngineer(Number(ds.i)); return; }
+  if(act === "confirm-rename"){ await doRenameEngineer(Number(ds.i)); return; }
+
+  if(act === "save-project"){ await trySaveProject(Number(ds.i)); return; }
+  if(act === "ask-del-project"){ pendingConfirm = {type:"deleteProject", key: Number(ds.i)}; render(); return; }
+  if(act === "confirm-del-project"){ await doDeleteProject(Number(ds.i)); return; }
+}
+
+async function onSubmit(ev){
+  ev.preventDefault();
+  if(!db){ showMsg("Conectando con el almacenamiento, intenta de nuevo en unos segundos.", "bad"); return; }
+  const fecha = document.getElementById("f_fecha").value;
+  const tipoHora = document.getElementById("f_tipo").value || "Normal";
+  const isWork = !AUSENCIA_TYPES.includes(tipoHora);
+  const horas = Number(document.getElementById("f_horas").value);
+  const obs = document.getElementById("f_obs").value.trim();
+
+  let actividad, detalle, proyecto, estado, pct;
+  if(isWork){
+    actividad = document.getElementById("f_actividad").value;
+    detalle = document.getElementById("f_detalle").value.trim();
+    proyecto = document.getElementById("f_proyecto").value.trim() || SIN_PROYECTO;
+    estado = document.getElementById("f_estado").value;
+    pct = Number(document.getElementById("f_pct").value);
+    if(!fecha || !actividad || !detalle || !estado){ showMsg("Completa todos los campos obligatorios.", "bad"); return; }
+    if(isNaN(pct) || pct<0 || pct>100){ showMsg("El % de avance debe estar entre 0 y 100.", "bad"); return; }
+  } else {
+    actividad = tipoHora; // así "Vacaciones", "Incapacidad", etc. aparecen agrupadas en los reportes
+    detalle = obs || tipoHora;
+    proyecto = SIN_PROYECTO;
+    estado = null; pct = null;
+    if(!fecha){ showMsg("Selecciona la fecha.", "bad"); return; }
+  }
+  const cap = TIPO_MAX[tipoHora] ?? MAX_HORAS;
+  if(isNaN(horas) || horas<0 || horas>cap){ showMsg(`Las horas de tipo "${tipoHora}" deben estar entre 0 y ${cap}.`, "bad"); return; }
+
+  try{
+    const snap = await db.collection("activities")
+      .where("engineer","==",selectedEngineer).where("fecha","==",fecha).get();
+    const yaRegistradas = snap.docs
+      .filter(d=> d.id !== editingId && (d.data().tipoHora||"Normal") === tipoHora)
+      .reduce((s,d)=> s + (typeof d.data().horas==="number"?d.data().horas:0), 0);
+    if(yaRegistradas + horas > cap + 0.001){
+      showMsg(`La suma de horas tipo "${tipoHora}" para ${fecha} supera ${cap} h (ya tienes ${yaRegistradas.toFixed(1)} h registradas ese día).`, "bad");
+      return;
+    }
+    if(editingId){
+      await db.doc("activities/"+editingId).update({
+        engineer: selectedEngineer, fecha, tipoHora, actividad, detalle, proyecto, estado, pct, horas, obs
+        // taskId no se toca al editar: un registro pasado siempre sigue perteneciendo a la misma tarea
+      });
+      showMsg("Registro actualizado correctamente.", "ok");
+      editingId = null; editingTaskId = null;
+    } else {
+      const taskId = isWork ? (selectedTaskOption || newTaskId()) : null;
+      await db.collection("activities").add({
+        engineer: selectedEngineer, fecha, tipoHora, actividad, detalle, proyecto, estado, pct, horas, obs, taskId,
+        createdAt: new Date().toISOString()
+      });
+      showMsg("Registro guardado correctamente.", "ok");
+      selectedTaskOption = "";
+    }
+    ev.target.reset();
+    document.getElementById("f_fecha").value = todayStr();
+    selectedTipoHora = "Normal";
+    render();
+  }catch(err){
+    showMsg("No se pudo guardar: " + (err.message || err.code), "bad");
+  }
+}
+
+// ---------- Equipo: cada ingeniero es un documento independiente en config_engineers/<slug> ----------
+async function trySaveEngineer(i){
+  const eng = engineersList[i];
+  const nameInput = document.querySelector(`.eq_name[data-i="${i}"]`);
+  const cargoInput = document.querySelector(`.eq_cargo[data-i="${i}"]`);
+  const newName = nameInput.value.trim();
+  const newCargo = cargoInput.value.trim();
+  if(!newName){ showMsg("El nombre no puede quedar vacío.", "bad"); return; }
+  const newId = slugify(newName);
+  if(newId !== eng.id){
+    pendingConfirm = { type:"renameEngineer", key:i, name:newName, cargo:newCargo, oldName:eng.name, oldId:eng.id, newId };
+    render();
+    return;
+  }
+  try{
+    await db.doc("config_engineers/"+eng.id).set({ name:newName, cargo:newCargo });
+    showMsg("Ingeniero actualizado.", "ok");
+  }catch(err){
+    showMsg("No se pudo guardar (recuerda: solo el dueño del documento puede editar el equipo). " + (err.message||err.code), "bad");
+  }
+}
+
+async function doRenameEngineer(i){
+  const { name:newName, cargo:newCargo, oldName, oldId, newId } = pendingConfirm;
+  pendingConfirm = null;
+  try{
+    const snap = await db.collection("activities").where("engineer","==",oldName).get();
+    for(const d of snap.docs){ await db.doc("activities/"+d.id).update({ engineer: newName }); }
+    await db.doc("config_engineers/"+newId).set({ name:newName, cargo:newCargo });
+    if(newId !== oldId){ await db.doc("config_engineers/"+oldId).delete(); }
+    if(selectedEngineer === oldName) selectedEngineer = newName;
+    showMsg("Ingeniero renombrado y registros históricos actualizados.", "ok");
+  }catch(err){
+    showMsg("No se pudo renombrar: " + (err.message||err.code), "bad");
+    render();
+  }
+}
+
+async function doDeleteEngineer(i){
+  pendingConfirm = null;
+  const eng = engineersList[i];
+  try{ await db.doc("config_engineers/"+eng.id).delete(); showMsg("Ingeniero eliminado de la lista activa.", "ok"); }
+  catch(err){ showMsg("No se pudo eliminar: " + (err.message||err.code), "bad"); render(); }
+}
+
+const SEED_DATA = {
+  engineers: [
+    {id:"edison_a", name:"Edison A.", cargo:"Ingeniero de Proyectos"},
+    {id:"lina_a", name:"Lina A.", cargo:"Ingeniero de Proyectos"},
+    {id:"nicolas_e", name:"Nicolas E.", cargo:"Ingeniero de Proyectos"}
+  ],
+  projects: [
+    {id:"0000", codigo:"0000", nombre:"Capacitación Rockwell"},
+    {id:"0001", codigo:"0001", nombre:"Capacitación Fortinet"},
+    {id:"2047", codigo:"2047", nombre:"Hocol-Computadores de flujo"},
+    {id:"3047", codigo:"3047", nombre:"Democenter"},
+    {id:"3047-1", codigo:"3047-1", nombre:"Demo Profit Loop"}
+  ],
+  estimates: {edison_a:42, lina_a:42, nicolas_e:42},
+  activities: [
+    {actividad:"Capacitación / formación",createdAt:"2026-10-09T15:38:28.472Z",detalle:"Capacitacion ARL - Acoso laboral y sexual",engineer:"Lina A.",estado:"Completada",fecha:"2026-09-23",horas:1.5,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv14r188rx0q",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T15:49:37.695Z",detalle:"Revisión de listado de repuestos de tableros del proyecto 3051",engineer:"Lina A.",estado:"En curso",fecha:"2026-09-24",horas:1.5,obs:"",pct:90,proyecto:"Sin proyecto / servicio activo",taskId:"tmv154hdw3kpt",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T16:23:41.346Z",detalle:"Configuración demo Profit Loop",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-08",horas:4.5,obs:"",pct:40,proyecto:"3047-1 - Demo Profit Loop",taskId:"tmv15u2nukggv",tipoHora:"Normal"},
+    {actividad:"Vacaciones",createdAt:"2026-10-09T15:57:09.614Z",detalle:"Vacaciones programadas",engineer:"Lina A.",estado:null,fecha:"2026-09-30",horas:8,obs:"Vacaciones programadas",pct:null,proyecto:"Sin proyecto / servicio activo",taskId:null,tipoHora:"Vacaciones"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T16:01:46.960Z",detalle:"Implementación de comentarios resultantes en demos del Demo Center",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-05",horas:1.5,obs:"",pct:84,proyecto:"3047 - Democenter",taskId:"tmv14poss85vq",tipoHora:"Normal"},
+    {actividad:"Otro (especificar en detalle)",createdAt:"2026-10-09T15:46:16.060Z",detalle:"Actividades funcionales de revisión de modalidad de trabajo",engineer:"Lina A.",estado:"Completada",fecha:"2026-09-24",horas:1,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv15120s5buw",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T15:37:25.708Z",detalle:"Entrega al equipo de ventas del Demo Center",engineer:"Lina A.",estado:"En curso",fecha:"2026-09-23",horas:1.5,obs:"",pct:85,proyecto:"3047 - Democenter",taskId:"tmv14poss85vq",tipoHora:"Normal"},
+    {actividad:"Vacaciones",createdAt:"2026-10-09T15:57:46.045Z",detalle:"Vacaciones",engineer:"Lina A.",estado:null,fecha:"2026-10-01",horas:8,obs:"",pct:null,proyecto:"Sin proyecto / servicio activo",taskId:null,tipoHora:"Vacaciones"},
+    {actividad:"Otro (especificar en detalle)",createdAt:"2026-10-09T15:43:07.865Z",detalle:"Participación en transferencia de oferta de Servicio de computadores de flujo Arrecife Hocol",engineer:"Lina A.",estado:"En curso",fecha:"2026-09-24",horas:1,obs:"",pct:5,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T15:48:03.468Z",detalle:"Preparación de entrega del Demo Center al equipo de ventas",engineer:"Lina A.",estado:"En curso",fecha:"2026-09-23",horas:5.5,obs:"",pct:80,proyecto:"3047 - Democenter",taskId:"tmv14poss85vq",tipoHora:"Normal"},
+    {actividad:"Compensatorio",createdAt:"2026-10-09T15:56:00.492Z",detalle:"Compensatorio por tiempo de viaje servicio 2045",engineer:"Lina A.",estado:null,fecha:"2026-09-28",horas:8,obs:"Compensatorio por tiempo de viaje servicio 2045",pct:null,proyecto:"Sin proyecto / servicio activo",taskId:null,tipoHora:"Compensatorio"},
+    {actividad:"Capacitación / formación",createdAt:"2026-10-09T16:30:17.047Z",detalle:"Capacitaciones Rockwell",engineer:"Edison A.",estado:"En curso",fecha:"2026-10-01",horas:5.5,obs:"",pct:20,proyecto:"0000 - Capacitación Rockwell",taskId:"tmv16lntj0nu6",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T16:12:26.080Z",detalle:"Configuración demo Profit Loop",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-07",horas:4.5,obs:"",pct:30,proyecto:"3047-1 - Demo Profit Loop",taskId:"tmv15u2nukggv",tipoHora:"Normal"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T15:59:09.838Z",detalle:"Puesta al día y actualización de correos y actividades tras días libres",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-05",horas:2,obs:"",pct:12,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:18:07.258Z",detalle:"Consolidación y revisión de comentarios del KOM con Hocol para la verificación y envío al cliente por el área comercial.",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-08",horas:2,obs:"",pct:37,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:02:55.102Z",detalle:"Formulación de consultas técnicas y revisión con compañeros de la presentación KOM servicio 2047",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-06",horas:2.5,obs:"",pct:25,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T16:43:42.633Z",detalle:"Listado de repuestos",engineer:"Nicolas E.",estado:"Completada",fecha:"2026-10-02",horas:2.5,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv172xexxu46",tipoHora:"Normal"},
+    {actividad:"Otro (especificar en detalle)",createdAt:"2026-10-09T16:13:35.649Z",detalle:"Actividades funcionales de diligenciamiento de últimas actividades diarias, pausas activas y break",engineer:"Lina A.",estado:"Completada",fecha:"2026-10-07",horas:1.5,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv16074xql9s",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T15:54:08.252Z",detalle:"Elaboración de listado de repuestos de tableros del proyecto 3051",engineer:"Lina A.",estado:"Completada",fecha:"2026-09-25",horas:2.5,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv154hdw3kpt",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T15:40:56.096Z",detalle:"Estudio y ajuste de presentación de Profit Loop",engineer:"Lina A.",estado:"Completada",fecha:"2026-09-24",horas:5,obs:"",pct:100,proyecto:"3047-1 - Demo Profit Loop",taskId:"tmv14u74w1l4w",tipoHora:"Normal"},
+    {actividad:"Capacitación / formación",createdAt:"2026-10-09T16:44:54.020Z",detalle:"Capacitación Fortinet",engineer:"Nicolas E.",estado:"En curso",fecha:"2026-10-06",horas:7,obs:"",pct:70,proyecto:"0001 - Capacitación Fortinet",taskId:"tmv16w2dhfzjs",tipoHora:"Normal"},
+    {actividad:"Desarrollo de ingeniería",createdAt:"2026-10-09T16:29:34.496Z",detalle:"Demo MQTT - RTU",engineer:"Edison A.",estado:"En curso",fecha:"2026-10-01",horas:3,obs:"",pct:25,proyecto:"3047 - Democenter",taskId:"tmv16kqzkca16",tipoHora:"Normal"},
+    {actividad:"Desarrollo de ingeniería",createdAt:"2026-10-09T16:43:01.583Z",detalle:"Demo MQTT - RTU",engineer:"Nicolas E.",estado:"En curso",fecha:"2026-10-02",horas:6,obs:"",pct:70,proyecto:"3047 - Democenter",taskId:"tmv1721qnrocd",tipoHora:"Normal"},
+    {actividad:"Capacitación / formación",createdAt:"2026-10-09T16:31:16.336Z",detalle:"Capacitaciones Rockwell",engineer:"Edison A.",estado:"En curso",fecha:"2026-10-02",horas:6,obs:"",pct:40,proyecto:"0000 - Capacitación Rockwell",taskId:"tmv16lntj0nu6",tipoHora:"Normal"},
+    {actividad:"Vacaciones",createdAt:"2026-10-09T15:56:22.453Z",detalle:"Vacaciones programadas",engineer:"Lina A.",estado:null,fecha:"2026-09-29",horas:8,obs:"Vacaciones programadas",pct:null,proyecto:"Sin proyecto / servicio activo",taskId:null,tipoHora:"Vacaciones"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:14:27.264Z",detalle:"Ajustes a presentación de KOM y reunión de Kick-off",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-07",horas:1.5,obs:"",pct:35,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T15:55:14.413Z",detalle:"Implementación de comentarios resultantes en demos del Demo Center",engineer:"Lina A.",estado:"En curso",fecha:"2026-09-25",horas:3,obs:"",pct:83,proyecto:"3047 - Democenter",taskId:"tmv14poss85vq",tipoHora:"Normal"},
+    {actividad:"Vacaciones",createdAt:"2026-10-09T15:58:13.859Z",detalle:"Vacaciones programadas",engineer:"Lina A.",estado:null,fecha:"2026-10-02",horas:8,obs:"Vacaciones programadas",pct:null,proyecto:"Sin proyecto / servicio activo",taskId:null,tipoHora:"Vacaciones"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:00:57.713Z",detalle:"Revisión información y elaboración presentación KOM servicio 2047",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-05",horas:5,obs:"",pct:20,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Capacitación / formación",createdAt:"2026-10-09T16:33:37.009Z",detalle:"Capacitaciones Rockwell",engineer:"Edison A.",estado:"En curso",fecha:"2026-10-05",horas:4,obs:"",pct:50,proyecto:"0000 - Capacitación Rockwell",taskId:"tmv16lntj0nu6",tipoHora:"Normal"},
+    {actividad:"Capacitación / formación",createdAt:"2026-10-09T16:38:22.469Z",detalle:"Capacitación Fortinet",engineer:"Nicolas E.",estado:"En curso",fecha:"2026-10-01",horas:6,obs:"",pct:50,proyecto:"0001 - Capacitación Fortinet",taskId:"tmv16w2dhfzjs",tipoHora:"Normal"},
+    {actividad:"Apoyo administrativo",createdAt:"2026-10-09T16:05:50.704Z",detalle:"Reunión de entrega de informe de auditoría interna y organización de información de proyectos en el servidor",engineer:"Lina A.",estado:"Completada",fecha:"2026-10-06",horas:2,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv15q8dss74e",tipoHora:"Normal"},
+    {actividad:"Apoyo comercial",createdAt:"2026-10-09T16:08:49.914Z",detalle:"Estructuración demo Profit Loop",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-06",horas:3,obs:"",pct:20,proyecto:"3047-1 - Demo Profit Loop",taskId:"tmv15u2nukggv",tipoHora:"Normal"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:36:03.544Z",detalle:"Preparación del servicio",engineer:"Edison A.",estado:"En curso",fecha:"2026-10-05",horas:4.5,obs:"",pct:50,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv16t36fpfqr",tipoHora:"Normal"},
+    {actividad:"Atención a cliente interno",createdAt:"2026-10-09T16:33:08.943Z",detalle:"Soporte surenergy",engineer:"Edison A.",estado:"Completada",fecha:"2026-10-02",horas:2.5,obs:"",pct:100,proyecto:"Por definir",taskId:"tmv16pcgf9u7i",tipoHora:"Normal"},
+    {actividad:"Otro (especificar en detalle)",createdAt:"2026-10-09T16:20:31.705Z",detalle:"Actividades funcionales de diligenciamiento de actividades diarias, pausas activas, break, envío de correos y soporte con consultas al área comercial",engineer:"Lina A.",estado:"Completada",fecha:"2026-10-08",horas:2,obs:"",pct:100,proyecto:"Sin proyecto / servicio activo",taskId:"tmv1694616qi3",tipoHora:"Normal"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:36:40.323Z",detalle:"Preparación del servicio",engineer:"Edison A.",estado:"En curso",fecha:"2026-10-06",horas:2.5,obs:"",pct:60,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv16t36fpfqr",tipoHora:"Normal"},
+    {actividad:"Planeación de proyecto",createdAt:"2026-10-09T16:04:20.136Z",detalle:"Reunión con Hocol de validación de ejecución del servicio 2047",engineer:"Lina A.",estado:"En curso",fecha:"2026-10-06",horas:1,obs:"",pct:30,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"},
+    {actividad:"Otro (especificar en detalle)",createdAt:"2026-10-09T15:44:46.871Z",detalle:"Revisión de la programación de los computadores de flujo Arrecife Hocol",engineer:"Lina A.",estado:"En curso",fecha:"2026-09-25",horas:2.5,obs:"",pct:10,proyecto:"2047 - Hocol-Computadores de flujo",taskId:"tmv14x0t5k9w3",tipoHora:"Normal"}
+  ]
+};
+
+async function importSeedData(){
+  if(!confirm(`Vas a importar ${SEED_DATA.activities.length} registros de actividad, ${SEED_DATA.engineers.length} ingenieros y ${SEED_DATA.projects.length} proyectos. Úsalo solo UNA vez. ¿Continuar?`)) return;
+  try{
+    for(const e of SEED_DATA.engineers){ await db.doc("config_engineers/"+e.id).set({name:e.name, cargo:e.cargo}); }
+    for(const p of SEED_DATA.projects){ await db.doc("config_projects/"+p.id).set({codigo:p.codigo, nombre:p.nombre}); }
+    await db.doc("config/estimates").set(SEED_DATA.estimates);
+    for(const a of SEED_DATA.activities){ await db.collection("activities").add(a); }
+    showMsg("Datos de respaldo importados correctamente.", "ok");
+  }catch(err){
+    showMsg("Error al importar: " + (err.message||err.code), "bad");
+  }
+}
+
+async function addEngineer(){
+  const name = document.getElementById("new_eng_name").value.trim();
+  const cargo = document.getElementById("new_eng_cargo").value.trim() || "Ingeniero de Proyectos";
+  if(!name){ showMsg("Escribe un nombre.", "bad"); return; }
+  const id = slugify(name);
+  try{
+    const existing = await db.doc("config_engineers/"+id).get();
+    if(existing.exists){ showMsg("Ese nombre ya existe.", "bad"); return; }
+    await db.doc("config_engineers/"+id).set({ name, cargo });
+    showMsg("Ingeniero agregado.", "ok");
+    const ni = document.getElementById("new_eng_name"); if(ni) ni.value = "";
+  }catch(err){
+    showMsg("No se pudo agregar: " + (err.message||err.code), "bad");
+  }
+}
+
+// ---------- Proyectos: cada proyecto es un documento independiente en config_projects/<codigo> ----------
+async function trySaveProject(i){
+  const p = projectsList[i];
+  const codInput = document.querySelector(`.pr_codigo[data-i="${i}"]`);
+  const nomInput = document.querySelector(`.pr_nombre[data-i="${i}"]`);
+  const codigo = codInput.value.trim();
+  const nombre = nomInput.value.trim();
+  if(!codigo){ showMsg("El código no puede quedar vacío.", "bad"); return; }
+  const newId = sanitizeId(codigo);
+  try{
+    await db.doc("config_projects/"+newId).set({ codigo, nombre });
+    if(newId !== p.id){ await db.doc("config_projects/"+p.id).delete(); }
+    showMsg("Proyecto actualizado.", "ok");
+  }catch(err){
+    showMsg("No se pudo guardar: " + (err.message||err.code), "bad");
+  }
+}
+
+async function doDeleteProject(i){
+  pendingConfirm = null;
+  const p = projectsList[i];
+  try{ await db.doc("config_projects/"+p.id).delete(); showMsg("Proyecto eliminado de la lista.", "ok"); }
+  catch(err){ showMsg("No se pudo eliminar: " + (err.message||err.code), "bad"); render(); }
+}
+
+async function addProject(){
+  const codigo = document.getElementById("new_pr_codigo").value.trim();
+  const nombre = document.getElementById("new_pr_nombre").value.trim();
+  if(!codigo){ showMsg("Escribe un código de proyecto.", "bad"); return; }
+  const id = sanitizeId(codigo);
+  try{
+    const existing = await db.doc("config_projects/"+id).get();
+    if(existing.exists){ showMsg("Ese código ya existe.", "bad"); return; }
+    await db.doc("config_projects/"+id).set({ codigo, nombre });
+    showMsg("Proyecto agregado.", "ok");
+    const ci = document.getElementById("new_pr_codigo"); if(ci) ci.value = "";
+    const ni = document.getElementById("new_pr_nombre"); if(ni) ni.value = "";
+  }catch(err){
+    showMsg("No se pudo agregar: " + (err.message||err.code), "bad");
+  }
+}
+
+// ---------- Subscripciones ----------
+function subscribeMine(){
+  if(unsubMine) unsubMine();
+  if(!db || !selectedEngineer) return;
+  const {start,end} = monthRange(selectedMonth);
+  unsubMine = db.collection("activities")
+    .where("engineer","==",selectedEngineer).where("fecha",">=",start).where("fecha","<=",end)
+    .orderBy("fecha","desc").limit(500)
+    .onSnapshot(snap=>{
+      myEntries = snap.docs.map(d=>({ _id:d.id, ...d.data() }));
+      render();
+    }, err=>{ console.error(err); });
+}
+
+function subscribeOpenTasks(){
+  if(unsubOpenTasks) unsubOpenTasks();
+  if(!db || !selectedEngineer) return;
+  // Sin límite de mes a propósito: una tarea bloqueada puede retomarse semanas después.
+  unsubOpenTasks = db.collection("activities")
+    .where("engineer","==",selectedEngineer).orderBy("fecha","desc").limit(300)
+    .onSnapshot(snap=>{
+      const entries = snap.docs.map(d=>d.data());
+      const byTask = {};
+      entries.forEach(d=>{
+        if(!d.taskId) return; // registros antiguos sin tarea asignada: no entran al selector
+        const t = byTask[d.taskId] || { taskId:d.taskId, proyecto:d.proyecto, actividad:d.actividad, detalle:d.detalle, pct:null, estado:null, fecha:null, _sortKey:"" };
+        const sortKey = (d.fecha||"") + "T" + (d.createdAt||"");
+        if(sortKey >= t._sortKey){
+          t._sortKey = sortKey; t.fecha = d.fecha; t.proyecto = d.proyecto; t.actividad = d.actividad; t.detalle = d.detalle;
+          if(typeof d.pct === "number") t.pct = d.pct;
+          if(d.estado) t.estado = d.estado;
+        }
+        byTask[d.taskId] = t;
+      });
+      openTasksList = Object.values(byTask)
+        .filter(t=>t.estado!=="Completada")
+        .sort((a,b)=> (b._sortKey||"").localeCompare(a._sortKey||""));
+      if(view==="form") render();
+    }, err=>{ console.error(err); });
+}
+
+function subscribeAll(){
+  if(unsubAll) unsubAll();
+  if(!db) return;
+  const {start,end} = monthRange(selectedMonth);
+  unsubAll = db.collection("activities").where("fecha",">=",start).where("fecha","<=",end).limit(1000)
+    .onSnapshot(snap=>{
+      allEntries = snap.docs.map(d=>({ _id:d.id, ...d.data() }));
+      if(view==="resumen") render();
+    }, err=>{ console.error(err); });
+}
+
+function subscribeEstimates(){
+  if(!db) return;
+  unsubEst = db.doc("config/estimates").onSnapshot(snap=>{
+    estimates = snap.exists ? (snap.data()||{}) : {};
+    if(view==="resumen") render();
+  }, err=>{ console.error(err); });
+}
+
+function subscribeEngineers(){
+  if(!db) return;
+  unsubEng = db.collection("config_engineers").orderBy("name").onSnapshot(async snap=>{
+    const list = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    if(list.length){
+      engineersList = list;
+    } else if(isOwner && !engSeedInFlight){
+      engSeedInFlight = true;
+      try{
+        for(const e of DEFAULT_ENGINEERS){
+          await db.doc("config_engineers/"+slugify(e.name)).set({ name:e.name, cargo:e.cargo });
+        }
+      }catch(err){ console.error(err); }
+      engSeedInFlight = false;
+      return; // el propio onSnapshot volverá a disparar con los datos ya creados
+    } else {
+      engineersList = [];
+    }
+    if(!selectedEngineer || !engineerNames().includes(selectedEngineer)){
+      selectedEngineer = engineerNames()[0] || "";
+    }
+    subscribeMine();
+    subscribeOpenTasks();
+    render();
+  }, err=>{ console.error(err); });
+}
+
+function subscribeProjects(){
+  if(!db) return;
+  unsubProj = db.collection("config_projects").orderBy("codigo").onSnapshot(snap=>{
+    projectsList = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    if(view==="form" || view==="proyectos") render();
+  }, err=>{ console.error(err); });
+}
+
+// ---------- CSV ----------
+function csvEsc(v){
+  if(v==null) return "";
+  const s = String(v).replace(/"/g,'""');
+  return /[",\n]/.test(s) ? `"${s}"` : s;
+}
+
+function buildReportData(){
+  const {days, start, end} = monthRange(selectedMonth);
+  const weeks = days/7;
+  const {byEng} = computeStats();
+  const porEng = engineersList.map(eng=>{
+    const e = byEng[eng.name];
+    const estKey = slugify(eng.name);
+    const estW = estimates[estKey]!=null ? Number(estimates[estKey]) : null;
+    const estMes = estW!=null ? estW*weeks : null;
+    const avg = e.lastPct;
+    const diasSin = e.last ? Math.round((new Date(todayStr())-new Date(e.last))/86400000) : null;
+    const estado = e.n===0 ? "Sin registros" : avg===null ? "Sin datos" : avg>=80 ? "Buen ritmo" : avg>=40 ? "En progreso" : "Rezagado";
+    return { name: eng.name, cargo: eng.cargo||"", n: e.n, horas: e.horas, horasExtra: e.horasExtra, horasAusencia: e.horasAusencia, horasPorTipo: e.horasPorTipo, estMes, diff: estMes!=null?(e.horas-estMes):null, avg, last: e.last, diasSin, estado, taskList: e.taskList, completedCount: e.completedCount, openCount: e.openCount };
+  });
+  const tareas = [];
+  porEng.forEach(e=> e.taskList.forEach(t=> tareas.push({ ingeniero:e.name, proyecto:t.proyecto, actividad:t.actividad, pct:t.pct, estado:t.estado, fecha:t.fecha })));
+  const byAct = {}; allEntries.forEach(d=>{ const k=d.actividad||"(sin definir)"; if(!byAct[k]) byAct[k]={h:0,n:0}; byAct[k].h+=(d.horas||0); byAct[k].n++; });
+  const byProy = {}; allEntries.forEach(d=>{ const k=d.proyecto||"(sin definir)"; if(!byProy[k]) byProy[k]={h:0,n:0}; byProy[k].h+=(d.horas||0); byProy[k].n++; });
+  const byTipoHora = {}; allEntries.forEach(d=>{ const k=d.tipoHora||"Normal"; if(!byTipoHora[k]) byTipoHora[k]={h:0,n:0}; byTipoHora[k].h+=(d.horas||0); byTipoHora[k].n++; });
+  // Clasificación por convención de código: 3XXX Proyecto, 2XXX Servicio, 0XXX Capacitación
+  const byCategoria = {};
+  const codigosPorCategoria = {};
+  allEntries.forEach(d=>{
+    const cat = proyectoCategoria(d.proyecto);
+    if(!byCategoria[cat]) byCategoria[cat] = {h:0,n:0,engs:new Set()};
+    byCategoria[cat].h += (d.horas||0); byCategoria[cat].n++; byCategoria[cat].engs.add(d.engineer);
+    if(cat==="Proyecto"||cat==="Servicio"||cat==="Capacitación"){
+      const cod = proyectoCodigo(d.proyecto) || d.proyecto;
+      if(!codigosPorCategoria[cat]) codigosPorCategoria[cat] = {};
+      if(!codigosPorCategoria[cat][d.proyecto]) codigosPorCategoria[cat][d.proyecto] = {h:0,n:0};
+      codigosPorCategoria[cat][d.proyecto].h += (d.horas||0);
+      codigosPorCategoria[cat][d.proyecto].n++;
+    }
+  });
+  const novedades = allEntries.filter(d=> d.estado==="Bloqueada" || (d.obs && d.obs.trim()))
+    .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  const proyectosActivos = Object.keys(byProy).filter(k => k!==SIN_PROYECTO && k!==POR_DEFINIR && k!=="(sin definir)");
+  const horasEnProyectos = proyectosActivos.reduce((s,k)=>s+byProy[k].h, 0);
+  const totalHoras = porEng.reduce((s,e)=>s+e.horas,0);
+  const horasApoyo = Math.max(0, totalHoras - horasEnProyectos);
+  const statusCounts = { "Buen ritmo":0, "En progreso":0, "Rezagado":0, "Sin registros":0, "Sin datos":0 };
+  porEng.forEach(e=>{ statusCounts[e.estado] = (statusCounts[e.estado]||0)+1; });
+  return { start, end, porEng, byAct, byProy, byTipoHora, byCategoria, codigosPorCategoria, novedades, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
+    totalHoras, totalRegistros: porEng.reduce((s,e)=>s+e.n,0),
+    sinRegistros: porEng.filter(e=>e.n===0).map(e=>e.name) };
+}
+
+async function downloadCsvReport(){
+  if(!downloadsCap){ showMsg("La descarga no está disponible en esta vista.", "bad"); return; }
+  const r = buildReportData();
+  const lines = [];
+  lines.push(`Reporte de Actividades - ${monthLabel(selectedMonth)}`);
+  lines.push(`Periodo:,${r.start},a,${r.end}`);
+  lines.push("");
+  lines.push("RESUMEN POR INGENIERO");
+  lines.push("Ingeniero,Cargo,Registros,Horas trabajadas,Horas extra,Horas ausencia,Horas estimadas (mes),Diferencia,% Avance (prom. tareas en curso),Tareas completadas,Tareas en curso,Ultima actualizacion,Dias sin actualizar,Estado");
+  r.porEng.forEach(e=>{
+    lines.push([e.name,e.cargo,e.n,e.horas.toFixed(1),e.horasExtra.toFixed(1),e.horasAusencia.toFixed(1),e.estMes!=null?e.estMes.toFixed(1):"",e.diff!=null?e.diff.toFixed(1):"",e.avg!=null?e.avg:"",e.completedCount,e.openCount,e.last||"",e.diasSin!=null?e.diasSin:"",e.estado].map(csvEsc).join(","));
+  });
+  lines.push("");
+  lines.push("HORAS POR TIPO DE HORA (Normal/Extra/Vacaciones/etc.)");
+  lines.push("Tipo,Horas,Registros");
+  Object.keys(r.byTipoHora).sort((a,b)=>r.byTipoHora[b].h-r.byTipoHora[a].h).forEach(k=>lines.push([k,r.byTipoHora[k].h.toFixed(1),r.byTipoHora[k].n].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("HORAS POR TIPO DE ACTIVIDAD");
+  lines.push("Actividad,Horas,Registros");
+  Object.keys(r.byAct).sort((a,b)=>r.byAct[b].h-r.byAct[a].h).forEach(k=>lines.push([k,r.byAct[k].h.toFixed(1),r.byAct[k].n].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("HORAS POR PROYECTO / CENTRO DE COSTO");
+  lines.push("Proyecto / Centro de costo,Horas,Registros");
+  Object.keys(r.byProy).sort((a,b)=>r.byProy[b].h-r.byProy[a].h).forEach(k=>lines.push([k,r.byProy[k].h.toFixed(1),r.byProy[k].n].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("ACTIVIDADES BLOQUEADAS / CON OBSERVACIONES");
+  lines.push("Fecha,Ingeniero,Actividad,Estado,Observacion");
+  r.novedades.forEach(d=>lines.push([d.fecha,d.engineer,d.actividad,d.estado,d.obs||""].map(csvEsc).join(",")));
+
+  const csv = "\uFEFF" + lines.join("\n");
+  try{ await downloadsCap.save({ filename: `Reporte_Actividades_${selectedMonth}.csv`, data: csv }); showMsg("CSV descargado.", "ok"); }
+  catch(err){ if(err && err.code!=="declined") showMsg("No se pudo descargar: "+(err.message||err.code), "bad"); }
+}
+
+// ---------- Word (.docx) generado en el navegador con JSZip ----------
+// ---------- Gráficas (canvas -> PNG base64, para incrustar en el Word) ----------
+function drawBarChartPNG(title, labels, values, colors){
+  const W=920, H=520, padL=60, padR=30, padT=50, padB=90;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = "#1F4E78"; ctx.font = "bold 20px Arial"; ctx.textAlign = "left";
+  ctx.fillText(title, padL, 30);
+  const maxVal = Math.max(1, ...values);
+  const niceMax = Math.ceil(maxVal*1.15 / 5) * 5 || 1;
+  const chartH = H - padT - padB, chartW = W - padL - padR;
+  // gridlines + eje Y
+  ctx.strokeStyle = "#E2E8F0"; ctx.fillStyle = "#6B7280"; ctx.font = "12px Arial"; ctx.textAlign = "right";
+  for(let i=0;i<=5;i++){
+    const y = padT + chartH - (chartH*i/5);
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
+    ctx.fillText(Math.round(niceMax*i/5), padL-8, y+4);
+  }
+  // barras
+  const n = labels.length || 1;
+  const slot = chartW/n, barW = Math.min(70, slot*0.55);
+  labels.forEach((lab,i)=>{
+    const v = values[i]||0;
+    const barH = chartH * (v/niceMax);
+    const x = padL + slot*i + (slot-barW)/2;
+    const y = padT + chartH - barH;
+    ctx.fillStyle = (colors && colors[i]) || "#1F4E78";
+    ctx.fillRect(x,y,barW,barH);
+    ctx.fillStyle = "#1F4E78"; ctx.font="bold 13px Arial"; ctx.textAlign="center";
+    ctx.fillText(v.toFixed(1), x+barW/2, y-6);
+    ctx.fillStyle = "#374151"; ctx.font="12px Arial";
+    const words = String(lab).split(" ");
+    let line1=lab, line2="";
+    if(lab.length>16){ const mid=Math.ceil(words.length/2); line1=words.slice(0,mid).join(" "); line2=words.slice(mid).join(" "); }
+    ctx.fillText(line1, x+barW/2, padT+chartH+18);
+    if(line2) ctx.fillText(line2, x+barW/2, padT+chartH+34);
+  });
+  ctx.strokeStyle = "#9CA3AF"; ctx.beginPath(); ctx.moveTo(padL,padT+chartH); ctx.lineTo(W-padR,padT+chartH); ctx.stroke();
+  return canvas.toDataURL("image/png").split(",")[1]; // base64 puro
+}
+
+function wImage(base64Png, relId, widthPx, heightPx){
+  // 9525 EMU por pixel (96dpi)
+  const cx = Math.round(widthPx*9525), cy = Math.round(heightPx*9525);
+  return { base64: base64Png, xml: `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="200"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${relId}" name="chart${relId}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${relId}" name="chart${relId}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` };
+}
+
+function xmlEsc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function wp(text, opts={}){
+  const { bold, color, size=21, after=160, italics } = opts;
+  let rpr = "";
+  if(bold) rpr += "<w:b/>";
+  if(italics) rpr += "<w:i/>";
+  if(color) rpr += `<w:color w:val="${color}"/>`;
+  rpr += `<w:sz w:val="${size}"/>`;
+  return `<w:p><w:pPr><w:spacing w:after="${after}"/></w:pPr><w:r><w:rPr>${rpr}</w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r></w:p>`;
+}
+function wBullet(text){
+  return `<w:p><w:pPr><w:spacing w:after="80"/><w:ind w:left="420" w:hanging="300"/></w:pPr><w:r><w:rPr><w:sz w:val="21"/></w:rPr><w:t xml:space="preserve">•  ${xmlEsc(text)}</w:t></w:r></w:p>`;
+}
+function wHeading(text){
+  return `<w:p><w:pPr><w:spacing w:before="280" w:after="140"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:color="1F4E78" w:space="4"/></w:pBdr></w:pPr><w:r><w:rPr><w:b/><w:color w:val="1F4E78"/><w:sz w:val="26"/></w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r></w:p>`;
+}
+function wTc(text, width, header){
+  const shd = header ? '<w:shd w:val="clear" w:fill="1F4E78"/>' : "";
+  const rpr = header ? '<w:b/><w:color w:val="FFFFFF"/>' : "";
+  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shd}</w:tcPr><w:p><w:r><w:rPr>${rpr}<w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r></w:p></w:tc>`;
+}
+function wTable(headers, widths, rows){
+  const grid = widths.map(w=>`<w:gridCol w:w="${w}"/>`).join("");
+  const hdr = "<w:tr>" + headers.map((h,i)=>wTc(h,widths[i],true)).join("") + "</w:tr>";
+  const body = rows.map(row=>"<w:tr>"+row.map((c,i)=>wTc(c,widths[i],false)).join("")+"</w:tr>").join("");
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="CCCCCC"/><w:left w:val="single" w:sz="4" w:color="CCCCCC"/><w:bottom w:val="single" w:sz="4" w:color="CCCCCC"/><w:right w:val="single" w:sz="4" w:color="CCCCCC"/><w:insideH w:val="single" w:sz="4" w:color="CCCCCC"/><w:insideV w:val="single" w:sz="4" w:color="CCCCCC"/></w:tblBorders></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${hdr}${body}</w:tbl><w:p/>`;
+}
+
+async function downloadWordReport(){
+  if(!downloadsCap){ showMsg("La descarga no está disponible en esta vista.", "bad"); return; }
+  if(typeof JSZip === "undefined"){ showMsg("No se pudo cargar el generador de Word. Intenta de nuevo.", "bad"); return; }
+  const r = buildReportData();
+  const pctEnProyectos = r.totalHoras>0 ? Math.round((r.horasEnProyectos/r.totalHoras)*100) : 0;
+  const images = []; // {base64, xml}
+  let body = "";
+  body += `<w:p><w:pPr><w:spacing w:after="60"/></w:pPr><w:r><w:rPr><w:i/><w:color w:val="B0B0B0"/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">[ Espacio reservado para membrete de Process ]</w:t></w:r></w:p>`;
+  body += `<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:color="CCCCCC" w:space="4"/></w:pBdr><w:spacing w:after="260"/></w:pPr></w:p>`;
+  body += wp("INFORME DE SEGUIMIENTO DE ACTIVIDADES", {bold:true, color:"1F4E78", size:32, after:40});
+  body += wp("Área de Proyectos", {bold:true, color:"6B7280", size:24, after:20});
+  body += wp(`Periodo: ${monthLabel(selectedMonth)}   ·   Corte: ${new Date().toLocaleDateString("es-CO",{day:"numeric",month:"long",year:"numeric"})}`, {italics:true, color:"6B7280", size:20, after:260});
+
+  // ---- Categorías (clasificación por código: 3XXX Proyecto, 2XXX Servicio, 0XXX Capacitación) ----
+  const CAT_ORDER = ["Proyecto","Servicio","Capacitación","Apoyo interno / sin código","Otro"];
+  const catsConDatos = CAT_ORDER.filter(c=>r.byCategoria[c] && r.byCategoria[c].h>0);
+  const catColors = { "Proyecto":"#1F4E78", "Servicio":"#2E7D32", "Capacitación":"#B26A00", "Apoyo interno / sin código":"#6B7280", "Otro":"#9CA3AF" };
+
+  body += wHeading("1. Resumen ejecutivo");
+  if(r.totalRegistros === 0){
+    body += wp("No se registraron actividades durante el periodo seleccionado. No es posible generar un análisis de carga de trabajo hasta que el equipo registre información.");
+  } else {
+    const topCat = catsConDatos.length ? catsConDatos.reduce((a,b)=> r.byCategoria[b].h>r.byCategoria[a].h?b:a) : null;
+    if(topCat){
+      const pctTop = Math.round((r.byCategoria[topCat].h/r.totalHoras)*100);
+      body += wp(`Del total de ${r.totalHoras.toFixed(1)} horas reportadas en el periodo, la mayor concentración corresponde a ${topCat.toLowerCase()} con ${r.byCategoria[topCat].h.toFixed(1)} horas (${pctTop}%). La sección 2 desglosa la distribución completa entre Proyectos, Servicios, Capacitaciones y apoyo interno.`);
+    } else {
+      body += wp(`Las ${r.totalHoras.toFixed(1)} horas reportadas en el periodo no se asociaron a proyectos, servicios ni capacitaciones con código formal.`);
+    }
+    if(r.byCategoria["Capacitación"] && r.byCategoria["Capacitación"].h>0){
+      body += wp(`Se invirtieron ${r.byCategoria["Capacitación"].h.toFixed(1)} horas en capacitación durante el periodo, lo que representa inversión en formación del equipo.`);
+    } else {
+      body += wp("No se registraron horas de capacitación en el periodo — punto a considerar para el desarrollo del equipo.", {italics:true, color:"6B7280", size:18});
+    }
+    const sc = r.statusCounts;
+    body += wp(`Estado del equipo: ${sc["Buen ritmo"]} en buen ritmo, ${sc["En progreso"]} en progreso, ${sc["Rezagado"]} rezagado(s), ${sc["Sin registros"]} sin registros${sc["Sin datos"]?`, ${sc["Sin datos"]} sin datos de avance`:""}.`);
+  }
+  body += wBullet(`${engineersList.length} colaboradores en el área.`);
+  body += wBullet(`${r.totalRegistros} actividad(es) registrada(s) en el periodo, con un total de ${r.totalHoras.toFixed(1)} horas reportadas.`);
+  body += wBullet(r.sinRegistros.length ? `Colaborador(es) sin registros en el periodo: ${r.sinRegistros.join(", ")}.` : "Todos los colaboradores presentan al menos un registro en el periodo.");
+  body += wp("Nota: los totales reflejan la información cargada hasta la fecha de corte; si el mes está en curso, interprételos como una fotografía preliminar.", {italics:true, color:"6B7280", size:18});
+
+  body += wHeading("2. Análisis por categoría: Proyectos, Servicios y Capacitaciones");
+  body += wp("Clasificación automática según el código asignado a cada proyecto/centro de costo: 3XXX = Proyecto, 2XXX = Servicio, 0XXX = Capacitación.", {italics:true, color:"6B7280", size:18});
+  if(catsConDatos.length){
+    const imgId = images.length+1;
+    const png = drawBarChartPNG("Horas por categoría", catsConDatos, catsConDatos.map(c=>r.byCategoria[c].h), catsConDatos.map(c=>catColors[c]));
+    const img = wImage(png, imgId, 460, 260);
+    images.push({base64:img.base64, relId:imgId});
+    body += img.xml;
+  }
+  body += wTable(["Categoría","Horas","% del total","Códigos distintos","Colaboradores"],[2600,1300,1400,1700,1600],
+    CAT_ORDER.filter(c=>r.byCategoria[c]).map(c=>{
+      const d = r.byCategoria[c];
+      const pct = r.totalHoras>0 ? Math.round((d.h/r.totalHoras)*100) : 0;
+      const nCodigos = r.codigosPorCategoria[c] ? Object.keys(r.codigosPorCategoria[c]).length : "—";
+      return [c, d.h.toFixed(1)+" h", pct+"%", String(nCodigos), String(d.engs.size)];
+    }));
+  ["Proyecto","Servicio","Capacitación"].forEach(cat=>{
+    const codigos = r.codigosPorCategoria[cat];
+    if(!codigos) return;
+    body += wp(`Detalle de ${cat.toLowerCase()}s activos:`, {bold:true, size:19, after:80});
+    const rows = Object.keys(codigos).sort((a,b)=>codigos[b].h-codigos[a].h).map(k=>[k, codigos[k].h.toFixed(1)+" h", String(codigos[k].n)]);
+    body += wTable([cat,"Horas","Registros"],[5400,1500,1500],rows);
+  });
+
+  body += wHeading("3. Resumen por colaborador");
+  {
+    const imgId = images.length+1;
+    const labsEng = r.porEng.map(e=>e.name);
+    const valsEng = r.porEng.map(e=>e.horas);
+    const png = drawBarChartPNG("Horas trabajadas por colaborador", labsEng, valsEng, labsEng.map(()=> "#1F4E78"));
+    const img = wImage(png, imgId, 460, 260);
+    images.push({base64:img.base64, relId:imgId});
+    body += img.xml;
+  }
+  body += wTable(["Colaborador","Horas trab.","Horas extra","Tareas compl.","Tareas en curso","% Avance (en curso)","Estado"],
+    [1700,1100,1100,1200,1300,1400,1200],
+    r.porEng.map(e=>[e.name,e.horas.toFixed(1)+" h",e.horasExtra.toFixed(1)+" h",String(e.completedCount),String(e.openCount),e.avg!=null?e.avg+"%":"—",e.estado]));
+
+  body += wHeading("4. Detalle de tareas por colaborador");
+  body += wp("Cada línea es una tarea distinta (combinación de proyecto y tipo de actividad) con su avance más reciente registrado. El % de la sección 3 es el promedio de estas tareas, no un dato suelto.", {italics:true, color:"6B7280", size:18});
+  body += r.tareas.length
+    ? wTable(["Colaborador","Proyecto","Actividad","% Avance","Estado","Fecha"],[1500,1700,1900,1100,1200,1000],
+        r.tareas.map(t=>[t.ingeniero,t.proyecto,t.actividad,t.pct!=null?t.pct+"%":"—",t.estado||"",t.fecha||""]))
+    : wp("Sin tareas registradas en el periodo.",{italics:true,color:"6B7280"});
+
+  body += wHeading("5. Horas por tipo de hora (Normal, Extra, Vacaciones, etc.)");
+  const tipoRows = Object.keys(r.byTipoHora).sort((a,b)=>r.byTipoHora[b].h-r.byTipoHora[a].h).map(k=>[k, r.byTipoHora[k].h.toFixed(1)+" h", String(r.byTipoHora[k].n)]);
+  body += tipoRows.length ? wTable(["Tipo de hora","Horas","Registros"],[2400,1300,1300],tipoRows) : wp("Sin datos en el periodo.",{italics:true,color:"6B7280"});
+
+  body += wHeading("6. Horas por tipo de actividad");
+  const actRows = Object.keys(r.byAct).sort((a,b)=>r.byAct[b].h-r.byAct[a].h).map(k=>[k, r.byAct[k].h.toFixed(1)+" h", String(r.byAct[k].n)]);
+  body += actRows.length ? wTable(["Tipo de actividad","Horas","Registros"],[5400,1500,1500],actRows) : wp("Sin datos en el periodo.",{italics:true,color:"6B7280"});
+
+  body += wHeading("7. Novedades, problemas o bloqueos reportados");
+  body += r.novedades.length
+    ? wTable(["Fecha","Colaborador","Actividad","Estado","Observación"],[1100,1500,1900,1200,2700],
+        r.novedades.map(d=>[d.fecha,d.engineer,d.actividad,d.estado,d.obs||""]))
+    : wp("No se reportaron novedades, problemas o bloqueos en el periodo.", {italics:true,color:"6B7280"});
+
+  body += wHeading("8. Conclusiones y recomendaciones");
+  body += wBullet(r.proyectosActivos.length
+    ? "Formalizar el seguimiento de los proyectos, servicios y capacitaciones activos, y mantener el registro diario para controlar el avance real frente al estimado."
+    : "Dado que no hay proyectos activos, se recomienda formalizar la asignación de actividades de apoyo a otras áreas para los colaboradores con menor carga registrada.");
+  if(!(r.byCategoria["Capacitación"] && r.byCategoria["Capacitación"].h>0)){
+    body += wBullet("Evaluar la programación de capacitaciones en el próximo periodo, dado que no se registró inversión de tiempo en formación este mes.");
+  }
+  body += wBullet(r.sinRegistros.length ? `Validar con ${r.sinRegistros.join(" y ")} el motivo de la ausencia de registros en el periodo.` : "Mantener el seguimiento diario para consolidar tendencias de carga de trabajo mes a mes.");
+  body += wBullet("Continuar el registro diario a través de la herramienta digital del área para mantener este informe actualizable en cualquier momento del mes.");
+  body += wp("Informe generado a partir del registro digital de actividades del Área de Proyectos.", {italics:true,color:"6B7280",size:16, after:0});
+  body += `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1080" w:bottom="1440" w:left="1080"/></w:sectPr>`;
+
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>${body}</w:body></w:document>`;
+  const hasImages = images.length>0;
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${hasImages?'<Default Extension="png" ContentType="image/png"/>':''}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+  const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${images.map(im=>`<Relationship Id="rIdImg${im.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/chart${im.relId}.png"/>`).join("")}</Relationships>`;
+
+  try{
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", contentTypes);
+    zip.file("_rels/.rels", rootRels);
+    zip.file("word/document.xml", documentXml);
+    if(hasImages){
+      zip.file("word/_rels/document.xml.rels", docRels);
+      images.forEach(im=> zip.file(`word/media/chart${im.relId}.png`, im.base64, {base64:true}));
+    }
+    const blob = await zip.generateAsync({ type:"blob", mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    await downloadsCap.save({ filename: `Informe_Actividades_${selectedMonth}.docx`, data: blob });
+    showMsg("Informe Word descargado.", "ok");
+  }catch(err){
+    if(err && err.code==="declined") return;
+    showMsg("No se pudo generar el Word: " + (err.message||err.code), "bad");
+  }
+}
+
+async function tryUnlockAdmin(){
+  const email = prompt("Correo de administrador:");
+  if(email === null) return;
+  const password = prompt("Contraseña:");
+  if(password === null) return;
+  try{
+    await window.__firebaseAuth.loginAdmin(email.trim(), password);
+    // isOwner se actualiza solo via onChange() más abajo
+  }catch(err){
+    alert("No se pudo iniciar sesión: " + (err.message || err.code));
+  }
+}
+async function lockAdmin(){
+  try{ await window.__firebaseAuth.logoutAdmin(); }catch(e){ console.error(e); }
+  view = "form";
+}
+
+async function init(){
+  render();
+  let tries = 0;
+  while(!(window.__firebaseDb && window.__firebaseAuth) && tries < 50){ await new Promise(r=>setTimeout(r,100)); tries++; }
+  db = window.__firebaseDb || null;
+  downloadsCap = { save: async ({filename, data})=>{
+    const blob = (data instanceof Blob) ? data : new Blob([data], {type: filename.endsWith(".csv") ? "text/csv;charset=utf-8" : "application/octet-stream"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  }};
+  if(!db || !window.__firebaseAuth){
+    app.innerHTML = `<h1>Registro Diario de Actividades</h1><div class="card"><div class="empty">No se pudo conectar con Firebase. Revisa tu conexión o recarga la página.</div></div>`;
+    return;
+  }
+  try{ await window.__firebaseAuth.ensureSignedIn(); }
+  catch(err){
+    app.innerHTML = `<h1>Registro Diario de Actividades</h1><div class="card"><div class="empty">No se pudo iniciar sesión en Firebase: ${err.message||err.code}. Revisa que "Anónimo" esté activado en Authentication → Sign-in method.</div></div>`;
+    return;
+  }
+  window.__firebaseAuth.onChange(()=>{
+    const wasOwner = isOwner;
+    isOwner = window.__firebaseAuth.isAdminNow();
+    if(wasOwner !== isOwner) render();
+  });
+  isOwner = window.__firebaseAuth.isAdminNow();
+  subscribeEngineers();
+  subscribeAll();
+  subscribeEstimates();
+  subscribeProjects();
+  render();
+}
+init();
+</script>
+</body>
+</html>
