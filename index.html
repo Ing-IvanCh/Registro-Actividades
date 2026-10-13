@@ -186,13 +186,6 @@ const AUSENCIA_TYPES = ["Vacaciones","Compensatorio","Incapacidad","Permiso","Li
 const TIPO_MAX = { "Normal": MAX_HORAS, "Extra": MAX_EXTRA, "Vacaciones": 8, "Compensatorio": 8, "Incapacidad": 8, "Permiso": 8, "Licencia": 8 };
 const SIN_PROYECTO = "Sin proyecto / servicio activo";
 const POR_DEFINIR = "Por definir";
-const DEFAULT_ENGINEERS = [
-  { name: "Edison A.", cargo: "Ingeniero de Proyectos" },
-  { name: "Nicolas E.", cargo: "Ingeniero de Proyectos" },
-  { name: "Lina A.", cargo: "Ingeniero de Proyectos" },
-  { name: "Martinri S.", cargo: "Ingeniero de Proyectos" },
-];
-
 let db = null, downloadsCap = null, isOwner = false;
 let view = "form";
 let engineersList = [];   // [{id,name,cargo}]
@@ -211,7 +204,6 @@ let selectedTipoHora = "Normal";
 let openTasksList = []; // tareas abiertas del ingeniero seleccionado (de cualquier mes)
 let selectedTaskOption = ""; // "" = nueva tarea, o el id de una tarea existente
 let unsubOpenTasks = null;
-let engSeedInFlight = false;
 
 const app = document.getElementById("app");
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -966,22 +958,8 @@ function subscribeEstimates(){
 
 function subscribeEngineers(){
   if(!db) return;
-  unsubEng = db.collection("config_engineers").orderBy("name").onSnapshot(async snap=>{
-    const list = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    if(list.length){
-      engineersList = list;
-    } else if(isOwner && !engSeedInFlight){
-      engSeedInFlight = true;
-      try{
-        for(const e of DEFAULT_ENGINEERS){
-          await db.doc("config_engineers/"+slugify(e.name)).set({ name:e.name, cargo:e.cargo });
-        }
-      }catch(err){ console.error(err); }
-      engSeedInFlight = false;
-      return; // el propio onSnapshot volverá a disparar con los datos ya creados
-    } else {
-      engineersList = [];
-    }
+  unsubEng = db.collection("config_engineers").orderBy("name").onSnapshot(snap=>{
+    engineersList = snap.docs.map(d=>({ id:d.id, ...d.data() }));
     if(!selectedEngineer || !engineerNames().includes(selectedEngineer)){
       selectedEngineer = engineerNames()[0] || "";
     }
