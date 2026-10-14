@@ -88,33 +88,67 @@
 </script>
 <style>
 :root{
-  --bg:#F2F2F7; --card:#FFFFFF; --text:#1D1D1F; --sub:#6E6E73; --border:rgba(60,60,67,0.13);
-  --primary:#007AFF; --primary-d:#0062CC; --accent:#EAF3FF;
+  --text:#1D1D1F; --sub:#6E6E73; --border:rgba(60,60,67,0.15);
+  --primary:#007AFF; --primary-d:#0062CC;
   --ok:#34C759; --warn:#FF9500; --bad:#FF3B30;
-  --okbg:rgba(52,199,89,0.13); --warnbg:rgba(255,149,0,0.14); --badbg:rgba(255,59,48,0.12);
-  --fill:#F2F2F3; --shadow:0 1px 2px rgba(0,0,0,.04), 0 2px 10px rgba(0,0,0,.035);
-  --radius-lg:18px; --radius-md:12px; --radius-sm:9px; --radius-pill:999px;
+  --okbg:rgba(52,199,89,0.14); --warnbg:rgba(255,149,0,0.15); --badbg:rgba(255,59,48,0.13);
+  --radius-lg:20px; --radius-md:13px; --radius-sm:10px; --radius-pill:999px;
+
+  /* Liquid Glass: superficies translúcidas con desenfoque + brillo de borde */
+  --glass-bg:rgba(255,255,255,0.55); --glass-border:rgba(255,255,255,0.6);
+  --glass-blur:blur(22px) saturate(180%);
+  --glass-shadow:0 1px 1px rgba(255,255,255,0.5) inset, 0 8px 28px rgba(31,41,55,0.08);
+  --fill:rgba(118,118,128,0.1); --fill-strong:rgba(255,255,255,0.75);
+  --accent:rgba(0,122,255,0.12);
+  --tab-track:rgba(118,118,128,0.14);
+
   padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --bg:#000000; --card:#1C1C1E; --text:#F5F5F7; --sub:#98989D; --border:rgba(255,255,255,0.09);
-    --primary:#0A84FF; --primary-d:#3399FF; --accent:rgba(10,132,255,0.16);
+    --text:#F5F5F7; --sub:#98989D; --border:rgba(255,255,255,0.12);
+    --primary:#0A84FF; --primary-d:#3399FF;
     --ok:#30D158; --warn:#FF9F0A; --bad:#FF453A;
-    --okbg:rgba(48,209,88,0.16); --warnbg:rgba(255,159,10,0.16); --badbg:rgba(255,69,58,0.16);
-    --fill:#2C2C2E; --shadow:none;
+    --okbg:rgba(48,209,88,0.18); --warnbg:rgba(255,159,10,0.18); --badbg:rgba(255,69,58,0.18);
+    --glass-bg:rgba(44,44,46,0.55); --glass-border:rgba(255,255,255,0.12);
+    --glass-shadow:0 1px 0 rgba(255,255,255,0.06) inset, 0 8px 28px rgba(0,0,0,0.35);
+    --fill:rgba(118,118,128,0.24); --fill-strong:rgba(58,58,60,0.75);
+    --accent:rgba(10,132,255,0.2);
+    --tab-track:rgba(118,118,128,0.2);
   }
 }
 :root[data-theme="dark"]{
-  --bg:#000000; --card:#1C1C1E; --text:#F5F5F7; --sub:#98989D; --border:rgba(255,255,255,0.09);
-  --primary:#0A84FF; --primary-d:#3399FF; --accent:rgba(10,132,255,0.16);
+  --text:#F5F5F7; --sub:#98989D; --border:rgba(255,255,255,0.12);
+  --primary:#0A84FF; --primary-d:#3399FF;
   --ok:#30D158; --warn:#FF9F0A; --bad:#FF453A;
-  --okbg:rgba(48,209,88,0.16); --warnbg:rgba(255,159,10,0.16); --badbg:rgba(255,69,58,0.16);
-  --fill:#2C2C2E; --shadow:none;
+  --okbg:rgba(48,209,88,0.18); --warnbg:rgba(255,159,10,0.18); --badbg:rgba(255,69,58,0.18);
+  --glass-bg:rgba(44,44,46,0.55); --glass-border:rgba(255,255,255,0.12);
+  --glass-shadow:0 1px 0 rgba(255,255,255,0.06) inset, 0 8px 28px rgba(0,0,0,0.35);
+  --fill:rgba(118,118,128,0.24); --fill-strong:rgba(58,58,60,0.75);
+  --accent:rgba(10,132,255,0.2);
+  --tab-track:rgba(118,118,128,0.2);
 }
 *{box-sizing:border-box}
+html{
+  background:
+    radial-gradient(900px 500px at 10% -5%, rgba(0,122,255,0.16), transparent 60%),
+    radial-gradient(800px 500px at 100% 0%, rgba(175,82,222,0.12), transparent 55%),
+    radial-gradient(800px 600px at 50% 100%, rgba(52,199,89,0.08), transparent 60%),
+    #F2F2F7;
+  min-height:100%;
+}
+@media (prefers-color-scheme: dark){ html:not([data-theme="light"]){ background:
+    radial-gradient(900px 500px at 10% -5%, rgba(10,132,255,0.22), transparent 60%),
+    radial-gradient(800px 500px at 100% 0%, rgba(191,90,242,0.16), transparent 55%),
+    radial-gradient(800px 600px at 50% 100%, rgba(48,209,88,0.1), transparent 60%),
+    #000000; } }
+html[data-theme="dark"]{ background:
+    radial-gradient(900px 500px at 10% -5%, rgba(10,132,255,0.22), transparent 60%),
+    radial-gradient(800px 500px at 100% 0%, rgba(191,90,242,0.16), transparent 55%),
+    radial-gradient(800px 600px at 50% 100%, rgba(48,209,88,0.1), transparent 60%),
+    #000000; }
 body{
-  margin:0;background:var(--bg);color:var(--text);
+  margin:0;background:transparent;color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   -webkit-font-smoothing:antialiased;
 }
@@ -122,34 +156,39 @@ body{
 h1{font-size:28px;font-weight:700;letter-spacing:-0.015em;color:var(--text);margin:4px 0 2px}
 .sub{color:var(--sub);font-size:14px;margin-bottom:18px;letter-spacing:-0.005em}
 
-.tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;align-items:center}
+.tabs{
+  display:flex;gap:4px;margin-bottom:18px;flex-wrap:wrap;align-items:center;
+  background:var(--tab-track);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-border);border-radius:var(--radius-pill);padding:4px;
+}
 .tab{
-  padding:8px 16px;border-radius:var(--radius-pill);border:none;background:var(--fill);
+  padding:8px 16px;border-radius:var(--radius-pill);border:none;background:transparent;
   cursor:pointer;font-size:13.5px;font-weight:600;color:var(--sub);
-  transition:background .15s ease, color .15s ease, transform .1s ease;
+  transition:background .2s ease, color .2s ease, transform .1s ease, box-shadow .2s ease;
 }
 .tab:active{transform:scale(.96)}
-.tab.active{background:var(--primary);color:#fff}
-.monthbox{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0}
+.tab.active{background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(0,122,255,0.35), 0 1px 0 rgba(255,255,255,0.3) inset}
+.monthbox{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;padding:2px 6px}
 .monthbox label{margin:0;font-size:13px;color:var(--sub);font-weight:500}
 .monthbox input{
-  padding:7px 10px;border-radius:var(--radius-sm);border:none;background:var(--fill);
+  padding:6px 10px;border-radius:var(--radius-sm);border:none;background:var(--fill-strong);
   color:var(--text);font-size:16px;min-width:0;max-width:160px
 }
 
 .card{
-  background:var(--card);border:1px solid var(--border);box-shadow:var(--shadow);
-  border-radius:var(--radius-lg);padding:20px;margin-bottom:16px
+  position:relative;background:var(--glass-bg);border:1px solid var(--glass-border);
+  box-shadow:var(--glass-shadow);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  border-radius:var(--radius-lg);padding:22px;margin-bottom:16px;
 }
 label{display:block;font-size:13px;font-weight:600;color:var(--sub);margin:14px 0 6px;letter-spacing:-0.005em}
 label:first-child{margin-top:0}
 select,input,textarea{
   width:100%;max-width:100%;padding:11px 12px;border-radius:var(--radius-sm);border:1px solid transparent;
-  background:var(--fill);color:var(--text);font-size:16px;font-family:inherit;
+  background:var(--fill-strong);color:var(--text);font-size:16px;font-family:inherit;
   transition:box-shadow .15s ease, background .15s ease;
 }
 select:focus,input:focus,textarea:focus{
-  outline:none;background:var(--card);border-color:var(--primary);
+  outline:none;border-color:var(--primary);
   box-shadow:0 0 0 3.5px color-mix(in srgb, var(--primary) 22%, transparent)
 }
 textarea{resize:vertical;min-height:54px;line-height:1.45}
@@ -161,11 +200,13 @@ button{font-family:inherit}
 button.primary{
   margin-top:18px;width:100%;padding:13px;border:none;border-radius:var(--radius-md);
   background:var(--primary);color:#fff;font-size:15px;font-weight:600;cursor:pointer;
+  box-shadow:0 4px 14px rgba(0,122,255,0.3), 0 1px 0 rgba(255,255,255,0.35) inset;
   transition:background .15s ease, transform .1s ease;
 }
 button.primary:active{background:var(--primary-d);transform:scale(.985)}
 button.secondary{
-  padding:9px 16px;border:none;border-radius:var(--radius-pill);background:var(--accent);
+  padding:9px 16px;border:1px solid var(--glass-border);border-radius:var(--radius-pill);
+  background:var(--accent);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
   color:var(--primary);font-size:13.5px;font-weight:600;cursor:pointer;
   transition:background .15s ease, transform .1s ease;
 }
@@ -226,6 +267,30 @@ tr:last-child td{border-bottom:none}
 .engrow input{padding:8px 10px;font-size:16px;min-width:90px;flex:1 1 120px}
 
 .admin-note{font-size:12.5px;color:var(--sub);margin-bottom:12px;line-height:1.5}
+
+/* ---- Tabla responsiva: en pantallas angostas se convierte en tarjetas apiladas, sin deslizar ---- */
+@media(max-width:720px){
+  .scroll-x{overflow-x:visible}
+  .scroll-x table, .scroll-x thead, .scroll-x tbody, .scroll-x tr, .scroll-x th, .scroll-x td{display:block}
+  .scroll-x thead{display:none}
+  .scroll-x table{width:100%}
+  .scroll-x tr{
+    background:var(--fill-strong);border:1px solid var(--border);border-radius:var(--radius-md);
+    padding:10px 14px;margin-bottom:10px;
+  }
+  .scroll-x tr:last-child{margin-bottom:0}
+  .scroll-x td{
+    display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+    padding:7px 0;border-bottom:1px solid var(--border);text-align:right;
+  }
+  .scroll-x td:last-child{border-bottom:none;justify-content:flex-end}
+  .scroll-x td::before{
+    content:attr(data-label);flex:0 0 auto;text-align:left;color:var(--sub);
+    font-size:12px;font-weight:600;padding-right:10px;
+  }
+  .scroll-x td[data-label=""]::before{display:none}
+  .scroll-x td[data-label=""]{justify-content:flex-end}
+}
 </style>
 </head>
 <body>
@@ -350,9 +415,12 @@ function renderForm(){
     <form id="entry_form">
       <div class="row2">
         <div><label>Fecha</label><input type="date" id="f_fecha" value="${todayStr()}" required></div>
-        <div><label>Tipo de hora</label><select id="f_tipo">${TIPOS_HORA.map(t=>`<option value="${t}" ${t===selectedTipoHora?'selected':''}>${t}</option>`).join("")}</select></div>
+        <div>
+          <label>Tipo de hora</label>
+          <select id="f_tipo">${TIPOS_HORA.map(t=>`<option value="${t}" ${t===selectedTipoHora?'selected':''}>${t}</option>`).join("")}</select>
+          <div class="hint" id="tipo_hint">${tipoHint(selectedTipoHora)}</div>
+        </div>
       </div>
-      <div class="hint" id="tipo_hint" style="margin:-6px 0 10px">${tipoHint(selectedTipoHora)}</div>
       <div id="work_fields" style="${AUSENCIA_TYPES.includes(selectedTipoHora)?'display:none':''}">
         ${!editingId ? `
         <label>Tarea <span class="hint">(continúa una tarea abierta o crea una nueva)</span></label>
@@ -397,16 +465,16 @@ function renderMyTable(){
     const isEditing = editingId === d._id;
     const tipo = d.tipoHora || "Normal";
     return `<tr${isEditing ? ' style="background:var(--accent)"' : ''}>
-      <td>${d.fecha||""}</td>
-      <td>${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipo}</span>`}</td>
-      <td>${d.actividad||""}</td>
-      <td>${d.detalle||""}</td>
-      <td>${d.proyecto||""}</td>
-      <td>${d.estado?`<span class="badge ${badgeClass(d.estado)}">${d.estado}</span>`:""}</td>
-      <td>${d.pct!=null?d.pct+"%":""}</td>
-      <td>${d.horas!=null?d.horas+" h":""}</td>
-      <td>${d.obs||""}</td>
-      <td>${delCell}</td>
+      <td data-label="Fecha">${d.fecha||""}</td>
+      <td data-label="Tipo">${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipo}</span>`}</td>
+      <td data-label="Actividad">${d.actividad||""}</td>
+      <td data-label="Detalle">${d.detalle||""}</td>
+      <td data-label="Proyecto">${d.proyecto||""}</td>
+      <td data-label="Estado">${d.estado?`<span class="badge ${badgeClass(d.estado)}">${d.estado}</span>`:"—"}</td>
+      <td data-label="% Avance">${d.pct!=null?d.pct+"%":"—"}</td>
+      <td data-label="Horas">${d.horas!=null?d.horas+" h":""}</td>
+      <td data-label="Observaciones">${d.obs||"—"}</td>
+      <td data-label="">${delCell}</td>
     </tr>`;
   }).join("");
   return `<table><thead><tr><th>Fecha</th><th>Tipo</th><th>Actividad</th><th>Detalle</th><th>Proyecto</th><th>Estado</th><th>%</th><th>Horas</th><th>Observ.</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
