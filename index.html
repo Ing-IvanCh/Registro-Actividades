@@ -236,15 +236,18 @@ tr:last-child td{border-bottom:none}
   .scroll-x table{table-layout:fixed}
   .scroll-x th,.scroll-x td{overflow-wrap:break-word;word-break:break-word;font-size:12.5px}
   .scroll-x th:nth-child(1),.scroll-x td:nth-child(1){width:7%}
-  .scroll-x th:nth-child(2),.scroll-x td:nth-child(2){width:6%}
-  .scroll-x th:nth-child(3),.scroll-x td:nth-child(3){width:11%}
-  .scroll-x th:nth-child(4),.scroll-x td:nth-child(4){width:16%}
+  .scroll-x th:nth-child(2),.scroll-x td:nth-child(2){width:11%}
+  .scroll-x th:nth-child(3),.scroll-x td:nth-child(3){width:10%}
+  .scroll-x th:nth-child(4),.scroll-x td:nth-child(4){width:18%}
   .scroll-x th:nth-child(5),.scroll-x td:nth-child(5){width:9%}
-  .scroll-x th:nth-child(6),.scroll-x td:nth-child(6){width:8%}
+  .scroll-x th:nth-child(6),.scroll-x td:nth-child(6){width:7%}
   .scroll-x th:nth-child(7),.scroll-x td:nth-child(7){width:5%}
   .scroll-x th:nth-child(8),.scroll-x td:nth-child(8){width:6%}
-  .scroll-x th:nth-child(9),.scroll-x td:nth-child(9){width:14%}
-  .scroll-x th:nth-child(10),.scroll-x td:nth-child(10){width:18%}
+  .scroll-x th:nth-child(9),.scroll-x td:nth-child(9){width:15%}
+  .scroll-x th:nth-child(10),.scroll-x td:nth-child(10){width:12%}
+  /* La píldora de Tipo debe poder partirse en 2 líneas en vez de desbordarse
+     sobre la columna de al lado (eso causaba el texto superpuesto en PC) */
+  .scroll-x td .badge{white-space:normal;word-break:break-word;display:inline-block;max-width:100%;text-align:center;line-height:1.3}
   /* Acciones: apilar Editar/Eliminar en vez de ponerlos en una sola línea apretada */
   .scroll-x td:nth-child(10){display:flex;flex-direction:column;align-items:flex-start;gap:4px;white-space:normal}
   .scroll-x td:nth-child(10)>button{width:100%;text-align:center;white-space:nowrap}
@@ -310,7 +313,7 @@ tr:last-child td{border-bottom:none}
     font-size:12px;font-weight:600;padding-right:10px;
   }
   .scroll-x td[data-label=""]::before{display:none}
-  .scroll-x td[data-label=""]{justify-content:flex-end}
+  .scroll-x td[data-label=""]{justify-content:flex-end;align-items:center;gap:8px}
 }
 </style>
 </head>
