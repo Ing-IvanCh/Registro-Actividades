@@ -736,7 +736,7 @@ function wireEvents(){
     selectedTipoHora = e.target.value;
     render();
     const horasEl = document.getElementById("f_horas");
-    if(horasEl && AUSENCIA_TYPES.includes(selectedTipoHora) && !horasEl.value){ horasEl.value = 8; }
+    if(horasEl && AUSENCIA_TYPES.includes(selectedTipoHora) && !horasEl.value){ horasEl.value = 8.5; }
   };
   // required dinámico: los campos de trabajo no son obligatorios si el tipo de hora es una ausencia
   const isWork = !AUSENCIA_TYPES.includes(selectedTipoHora);
