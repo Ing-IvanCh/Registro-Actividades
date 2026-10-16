@@ -316,7 +316,7 @@ const MAX_HORAS = 8.5;
 const MAX_EXTRA = 4;
 const TIPOS_HORA = ["Normal","Extra","Vacaciones","Compensatorio","Incapacidad","Permiso","Licencia"];
 const AUSENCIA_TYPES = ["Vacaciones","Compensatorio","Incapacidad","Permiso","Licencia"];
-const TIPO_MAX = { "Normal": MAX_HORAS, "Extra": MAX_EXTRA, "Vacaciones": 8, "Compensatorio": 8, "Incapacidad": 8, "Permiso": 8, "Licencia": 8 };
+const TIPO_MAX = { "Normal": MAX_HORAS, "Extra": MAX_EXTRA, "Vacaciones": MAX_HORAS, "Compensatorio": MAX_HORAS, "Incapacidad": MAX_HORAS, "Permiso": MAX_HORAS, "Licencia": MAX_HORAS };
 const SIN_PROYECTO = "Sin proyecto / servicio activo";
 const POR_DEFINIR = "Por definir";
 let db = null, downloadsCap = null, isOwner = false;
@@ -467,8 +467,8 @@ function renderForm(){
       </div>
       <label id="horas_label">Horas (máx. ${TIPO_MAX[selectedTipoHora]} h/día${selectedTipoHora==="Normal"?" — no incluye horas extra":""})</label>
       <input type="number" id="f_horas" min="0" max="${TIPO_MAX[selectedTipoHora]}" step="0.5" required>
-      <label>${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Motivo / observación" : "Observaciones"} <span class="hint">${AUSENCIA_TYPES.includes(selectedTipoHora) ? "(opcional)" : "(solo si hay problemas o bloqueos)"}</span></label>
-      <textarea id="f_obs" placeholder="${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Ej: vacaciones programadas, cita médica, etc." : "Dejar vacío si no hay novedades"}"></textarea>
+      <label>${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Motivo / observación" : "Observaciones"} <span class="hint">${AUSENCIA_TYPES.includes(selectedTipoHora) ? "(opcional)" : "(solo si algo te está bloqueando — el contexto de la actividad va en \"Detalle\")"}</span></label>
+      <textarea id="f_obs" placeholder="${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Ej: vacaciones programadas, cita médica, etc." : "Dejar vacío si no hay bloqueos. No repitas aquí lo que ya pusiste en Detalle."}"></textarea>
       <button type="submit" class="primary">${editingId ? "Guardar cambios" : "Guardar registro"}</button>
       ${editingId ? `<button type="button" class="secondary" id="btn_cancel_edit" style="width:100%;margin-top:8px">Cancelar edición</button>` : ""}
       <div class="msg ${formMsgType}" id="msgbox">${formMsg}</div>
@@ -1199,15 +1199,21 @@ function buildReportData(){
       codigosPorCategoria[cat][d.proyecto].n++;
     }
   });
-  const novedades = allEntries.filter(d=> d.estado==="Bloqueada" || (d.obs && d.obs.trim()))
+  // Bloqueos reales (estado="Bloqueada"): van a gerencia como novedad crítica.
+  // Notas adicionales: cualquier otro registro con texto en Observaciones que NO está bloqueado —
+  // se conservan en el reporte como contexto, pero separadas para no confundirlas con bloqueos.
+  const bloqueos = allEntries.filter(d=> d.estado==="Bloqueada")
     .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  const notasAdicionales = allEntries.filter(d=> d.estado!=="Bloqueada" && d.obs && d.obs.trim())
+    .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  const novedades = bloqueos.concat(notasAdicionales); // compat: CSV/consumidores que usaban la lista combinada
   const proyectosActivos = Object.keys(byProy).filter(k => k!==SIN_PROYECTO && k!==POR_DEFINIR && k!=="(sin definir)");
   const horasEnProyectos = proyectosActivos.reduce((s,k)=>s+byProy[k].h, 0);
   const totalHoras = porEng.reduce((s,e)=>s+e.horas,0);
   const horasApoyo = Math.max(0, totalHoras - horasEnProyectos);
   const statusCounts = { "Buen ritmo":0, "En progreso":0, "Rezagado":0, "Sin registros":0, "Sin datos":0 };
   porEng.forEach(e=>{ statusCounts[e.estado] = (statusCounts[e.estado]||0)+1; });
-  return { start, end, porEng, byAct, byProy, byTipoHora, byCategoria, codigosPorCategoria, novedades, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
+  return { start, end, porEng, byAct, byProy, byTipoHora, byCategoria, codigosPorCategoria, novedades, bloqueos, notasAdicionales, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
     totalHoras, totalRegistros: porEng.reduce((s,e)=>s+e.n,0),
     sinRegistros: porEng.filter(e=>e.n===0).map(e=>e.name) };
 }
@@ -1237,9 +1243,13 @@ async function downloadCsvReport(){
   lines.push("Proyecto / Centro de costo,Horas,Registros");
   Object.keys(r.byProy).sort((a,b)=>r.byProy[b].h-r.byProy[a].h).forEach(k=>lines.push([k,r.byProy[k].h.toFixed(1),r.byProy[k].n].map(csvEsc).join(",")));
   lines.push("");
-  lines.push("ACTIVIDADES BLOQUEADAS / CON OBSERVACIONES");
+  lines.push("BLOQUEOS REPORTADOS (estado = Bloqueada)");
   lines.push("Fecha,Ingeniero,Actividad,Estado,Observacion");
-  r.novedades.forEach(d=>lines.push([d.fecha,d.engineer,d.actividad,d.estado,d.obs||""].map(csvEsc).join(",")));
+  r.bloqueos.forEach(d=>lines.push([d.fecha,d.engineer,d.actividad,d.estado,d.obs||""].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("NOTAS Y OBSERVACIONES ADICIONALES (no son bloqueos)");
+  lines.push("Fecha,Ingeniero,Actividad,Estado,Observacion");
+  r.notasAdicionales.forEach(d=>lines.push([d.fecha,d.engineer,d.actividad,d.estado,d.obs||""].map(csvEsc).join(",")));
 
   const csv = "\uFEFF" + lines.join("\n");
   try{ await downloadsCap.save({ filename: `Reporte_Actividades_${selectedMonth}.csv`, data: csv }); showMsg("CSV descargado.", "ok"); }
@@ -1430,10 +1440,16 @@ async function downloadWordReport(){
   body += actRows.length ? wTable(["Tipo de actividad","Horas","Registros"],[5400,1500,1500],actRows) : wp("Sin datos en el periodo.",{italics:true,color:"6B7280"});
 
   body += wHeading("7. Novedades, problemas o bloqueos reportados");
-  body += r.novedades.length
+  body += wp("7.1 Bloqueos reportados (requieren atención)", {bold:true, size:19, after:80});
+  body += r.bloqueos.length
     ? wTable(["Fecha","Colaborador","Actividad","Estado","Observación"],[1100,1500,1900,1200,2700],
-        r.novedades.map(d=>[d.fecha,d.engineer,d.actividad,d.estado,d.obs||""]))
-    : wp("No se reportaron novedades, problemas o bloqueos en el periodo.", {italics:true,color:"6B7280"});
+        r.bloqueos.map(d=>[d.fecha,d.engineer,d.actividad,d.estado,d.obs||""]))
+    : wp("No se reportaron bloqueos en el periodo.", {italics:true,color:"6B7280"});
+  body += wp("7.2 Notas y contexto adicional (no son bloqueos, solo información de apoyo)", {bold:true, size:19, after:80});
+  body += r.notasAdicionales.length
+    ? wTable(["Fecha","Colaborador","Actividad","Estado","Observación"],[1100,1500,1900,1200,2700],
+        r.notasAdicionales.map(d=>[d.fecha,d.engineer,d.actividad,d.estado,d.obs||""]))
+    : wp("Sin notas adicionales en el periodo.", {italics:true,color:"6B7280"});
 
   body += wHeading("8. Conclusiones y recomendaciones");
   body += wBullet(r.proyectosActivos.length
