@@ -327,7 +327,7 @@ tr:last-child td{border-bottom:none}
 <body>
 <div class="wrap" id="app">
   <h1>Registro Diario de Actividades</h1>
-  <div class="sub">Área de Proyectos — mismas condiciones que el Excel (máx. 8.5 h/día)</div>
+  <div class="sub">Área de Proyectos · Process Solutions · Control de actividades y tiempos</div>
   <div class="empty">Cargando…</div>
 </div>
 
@@ -474,15 +474,15 @@ function proyectoCategoria(proyectoStr){
 function render(){
   app.innerHTML = `
     <h1>Registro Diario de Actividades</h1>
-    <div class="sub">Área de Proyectos — mismas condiciones que el Excel (máx. ${MAX_HORAS} h/día)</div>
+    <div class="sub">Área de Proyectos · Process Solutions · Control de actividades y tiempos</div>
     ${globalError ? `<div class="msg bad" style="display:block">${globalError} <button class="tiny" id="btn_dismiss_error" style="margin-left:8px">Cerrar</button></div>` : ""}
     <div class="tabs">
       <div class="tab ${view==='form'?'active':''}" data-tab="form">Registrar / Mis actividades</div>
       <div class="tab ${view==='resumen'?'active':''}" data-tab="resumen">Resumen general</div>
-      ${isOwner ? `<div class="tab ${view==='equipo'?'active':''}" data-tab="equipo">Equipo (solo tú)</div>` : ""}
-      ${isOwner ? `<div class="tab ${view==='proyectos'?'active':''}" data-tab="proyectos">Proyectos (solo tú)</div>` : ""}
-      ${isOwner ? `<div class="tab ${view==='compensatorios'?'active':''}" data-tab="compensatorios">Compensatorios (solo tú)</div>` : ""}
-      ${isOwner ? `<div class="tab ${view==='bonos'?'active':''}" data-tab="bonos">Bonos de campo (solo tú)</div>` : ""}
+      ${isOwner ? `<div class="tab ${view==='equipo'?'active':''}" data-tab="equipo">Equipo</div>` : ""}
+      ${isOwner ? `<div class="tab ${view==='proyectos'?'active':''}" data-tab="proyectos">Proyectos</div>` : ""}
+      ${isOwner ? `<div class="tab ${view==='compensatorios'?'active':''}" data-tab="compensatorios">Compensatorios</div>` : ""}
+      ${isOwner ? `<div class="tab ${view==='bonos'?'active':''}" data-tab="bonos">Bonos de campo</div>` : ""}
     </div>
     <div class="toolbar">
       ${(view==='form'||view==='resumen'||view==='compensatorios'||view==='bonos') ? `<div class="monthbox"><label style="margin:0">Mes:</label><input type="month" id="month_sel" value="${selectedMonth}"></div>` : ""}
@@ -724,7 +724,7 @@ function renderEquipo(){
   }).join("");
   return `
   <div class="card">
-    <div class="admin-note">Esta sección solo la ves tú (el dueño del documento). Cada ingeniero es un registro independiente, así que agregar, renombrar o eliminar a uno nunca afecta a los demás. Renombrar actualiza también sus registros históricos. Eliminar no borra el historial, solo lo quita de la lista para nuevos registros.</div>
+    <div class="admin-note">Cada ingeniero es un registro independiente, así que agregar, renombrar o eliminar a uno nunca afecta a los demás. Renombrar actualiza también sus registros históricos. Eliminar no borra el historial, solo lo quita de la lista para nuevos registros.</div>
     ${rows || '<div class="empty">Sin ingenieros todavía.</div>'}
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
       <label>Agregar nuevo ingeniero</label>
@@ -736,7 +736,7 @@ function renderEquipo(){
     </div>
     <div class="msg ${formMsgType}" id="msgbox3" style="margin-top:10px">${formMsg}</div>
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <label>Datos de respaldo (traídos desde la app en Claude)</label>
+      <label>Datos de respaldo (importación inicial)</label>
       <div class="hint" style="margin-bottom:8px">Úsalo UNA sola vez, recién estrenada esta base de datos. Si lo corres dos veces, duplica los registros.</div>
       <button class="secondary" id="btn_import_seed">Importar datos de respaldo</button>
     </div>
@@ -757,7 +757,7 @@ function renderProyectos(){
   }).join("");
   return `
   <div class="card">
-    <div class="admin-note">Esta sección solo la ves tú. Cada proyecto es un registro independiente (no se pisan entre sí). Aparecen como sugerencia en "Proyecto / Centro de costo" al registrar actividades; los ingenieros también pueden escribir uno nuevo libremente.<br><b>Convención de códigos</b> (para que el informe clasifique bien): <b>3XXX</b> = Proyectos · <b>2XXX</b> = Servicios · <b>0XXX</b> = Capacitaciones. Un código que no empiece así se reporta como "Otro".</div>
+    <div class="admin-note">Cada proyecto es un registro independiente (no se pisan entre sí). Aparecen como sugerencia en "Proyecto / Centro de costo" al registrar actividades; los ingenieros también pueden escribir uno nuevo libremente.<br><b>Convención de códigos</b> (para que el informe clasifique bien): <b>3XXX</b> = Proyectos · <b>2XXX</b> = Servicios · <b>0XXX</b> = Capacitaciones. Un código que no empiece así se reporta como "Otro".</div>
     ${rows || '<div class="empty">Sin proyectos configurados todavía.</div>'}
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
       <label>Agregar nuevo proyecto</label>
@@ -1207,6 +1207,13 @@ const SALDO_CORTE = "2026-10-01";
 const SALDO_VERSION = 2;
 function fmtN(n){ return String(Math.round((Number(n)||0)*100)/100); }
 function fmtHD(h){ return `${fmtN(h)} h (${fmtN((Number(h)||0)/MAX_HORAS)} d)`; }
+// Compensatorios: los días son la unidad principal (1 d = 8.5 h) y las horas van de secundario
+function hToD(h){ return (Number(h)||0)/MAX_HORAS; }
+function fmtD(h){ return `${fmtN(hToD(h))} d`; }
+function fmtDH(h){ return `${fmtN(hToD(h))} d (${fmtN(h)} h)`; }
+function dhHtml(h, signo){ return `${signo||""}${fmtN(hToD(h))} d <span class="hint">(${fmtN(h)} h)</span>`; }
+const SALDO_HIST_LABEL = "Saldo histórico";
+const SALDO_HIST_FECHA = "30-sep-2026"; // último día antes de SALDO_CORTE
 function escH(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function campoPagoId(engineer, fecha){ return sanitizeId(engineer) + "_" + fecha; }
 function esMovilizacion(d){ return d.extraTipo === "Movilización a campo"; }
@@ -1307,9 +1314,10 @@ function cbTop(tabLabel){
 }
 function cbExcelHint(r, kind){
   const ref = excelRef(r.name);
-  if(!ref) return `Sin datos en el Excel para este ingeniero.`;
-  const v = kind==="comp" ? `compensatorio ${fmtHD(ref.compHoras)} · domingos por pagar ${fmtHD(ref.domHoras)}` : `${ref.bonoDias} días de bono pendientes`;
-  return `Excel (${escH(ref.nombre)}): ${v}.${r.saldo._auto ? " <b>Cargado automáticamente.</b>" : " Corregido por ti."}`;
+  if(!ref) return `Sin saldo histórico cargado para este ingeniero.`;
+  if(!r.saldo._auto) return `Saldo histórico <b>corregido manualmente</b>.`;
+  const v = kind==="comp" ? `compensatorio ${fmtDH(ref.compHoras)} · domingos por pagar ${fmtDH(ref.domHoras)}` : `${ref.bonoDias} días de bono pendientes`;
+  return `Valores cargados del control anterior: ${v}.`;
 }
 
 // --- Pestaña Compensatorios ---
@@ -1321,13 +1329,13 @@ function renderCompensatorios(){
   const cards = list.map(r=>`
     <div class="cbcard ${r.name===compSel?"sel":""}" data-act="cb-open" data-tab="comp" data-eng="${escH(r.name)}">
       <div class="cbname">${escH(r.name)}</div>
-      <div class="cbbig" ${r.compPendH<0?'style="color:var(--bad)"':''}>${fmtN(r.compPendH)} h</div>
-      <div class="cbsub">${fmtN(r.compPendH/MAX_HORAS)} días de compensatorio pendientes</div>
-      ${r.domPendH>0 ? `<div class="cbsub" style="color:var(--warn)">Por pagar en dinero: ${fmtN(r.domPendH)} h</div>` : `<div class="cbsub">Sin domingos por pagar</div>`}
+      <div class="cbbig" ${r.compPendH<0?'style="color:var(--bad)"':''}>${fmtD(r.compPendH)}</div>
+      <div class="cbsub">de compensatorio pendientes (${fmtN(r.compPendH)} h)</div>
+      ${r.domPendH>0 ? `<div class="cbsub" style="color:var(--warn)">Por pagar en dinero: ${fmtDH(r.domPendH)}</div>` : `<div class="cbsub">Sin domingos por pagar</div>`}
     </div>`).join("");
   let html = `${cbTop()}
   <div class="card">
-    <div class="admin-note">Toda hora <b>Extra</b> suma a compensatorio (entre semana, sábado y movilización). Los <b>domingos y festivos</b> salen como <b>pago en dinero</b> y puedes pasarlos a compensatorio; la <b>movilización siempre se compensa</b>. Cada día registrado como <b>Compensatorio</b> se descuenta solo. Cuenta desde el ${SALDO_CORTE}; lo anterior viene del Excel.</div>
+    <div class="admin-note">Toda hora <b>Extra</b> suma a compensatorio (entre semana, sábado y movilización). Los <b>domingos y festivos</b> salen como <b>pago en dinero</b> y puedes pasarlos a compensatorio; la <b>movilización siempre se compensa</b>. Cada día registrado como <b>Compensatorio</b> se descuenta solo. Un día = ${MAX_HORAS} h. Cuenta desde el ${SALDO_CORTE}; lo anterior es el saldo histórico.</div>
     <div class="cbgrid">${cards || '<div class="empty">Sin ingenieros configurados.</div>'}</div>
   </div>`;
   const r = res[compSel];
@@ -1342,13 +1350,13 @@ function renderCompDetalle(r){
   const pendPago = r.pago.filter(d=>!d.pagado);
   const excelDomPend = r.domSaldoH>0 && !s.domSaldoMesPago;
   const pagoRows = (excelDomPend ? `<tr>
-      <td data-label="Fecha">Antes del ${SALDO_CORTE}</td><td data-label="Día">—</td><td data-label="Detalle">Saldo del Excel</td>
-      <td data-label="Horas">${fmtN(r.domSaldoH)} h</td>
+      <td data-label="Fecha">Al ${SALDO_HIST_FECHA}</td><td data-label="Día">—</td><td data-label="Detalle">${SALDO_HIST_LABEL}</td>
+      <td data-label="Días">${dhHtml(r.domSaldoH)}</td>
       <td data-label=""><button class="tiny ok" data-act="cb-saldo-pago" data-eng="${escH(r.name)}" data-kind="dom">Marcar pagado</button></td></tr>` : "")
     + pendPago.map(d=>`<tr>
       <td data-label="Fecha">${d.fecha}</td><td data-label="Día">${diaLabel(d.fecha)}</td>
       <td data-label="Detalle">${escH(d.detalle||d.actividad||"")}${d.proyecto?`<div class="hint">${escH(d.proyecto)}</div>`:""}</td>
-      <td data-label="Horas">${fmtN(d.h)} h</td>
+      <td data-label="Días">${dhHtml(d.h)}</td>
       <td data-label=""><button class="tiny ok" data-act="cb-dom-pago" data-id="${d._id}">Marcar pagado</button> <button class="tiny" data-act="cb-trat" data-id="${d._id}" data-v="Tiempo">Pasar a compensatorio</button></td></tr>`).join("");
   // 2) Movimientos de compensatorio: mes seleccionado arriba, anteriores plegados
   const movs = r.tiempo.map(d=>({ ...d, signo:+1, concepto: esMovilizacion(d) ? "Extra · movilización" : (esDominical(d.fecha) ? "Extra · domingo/festivo (compensado)" : "Extra · trabajo") }))
@@ -1357,18 +1365,18 @@ function renderCompDetalle(r){
   const movRow = d=>`<tr>
       <td data-label="Fecha">${d.fecha}</td><td data-label="Día">${diaLabel(d.fecha)}</td>
       <td data-label="Concepto">${escH(d.concepto)}</td>
-      <td data-label="Horas" style="font-weight:600;color:${d.signo>0?"var(--ok)":"var(--bad)"}">${d.signo>0?"+":"−"}${fmtN(d.h)} h</td>
+      <td data-label="Días" style="font-weight:600;color:${d.signo>0?"var(--ok)":"var(--bad)"}">${dhHtml(d.h, d.signo>0?"+":"−")}</td>
       <td data-label="">${d.signo>0 && puedeElegirPago(d) ? `<button class="tiny" data-act="cb-trat" data-id="${d._id}" data-v="Pago">Pasar a pago en dinero</button>` : ""}</td></tr>`;
   const movMes = movs.filter(d=>d.fecha.slice(0,7)===selectedMonth);
   const movOtros = movs.filter(d=>d.fecha.slice(0,7)!==selectedMonth);
   // 3) Ya pagados en dinero (plegado)
   const pagados = r.pago.filter(d=>d.pagado);
   const pagadosRows = (r.domSaldoH>0 && s.domSaldoMesPago ? `<tr>
-      <td data-label="Fecha">Antes del ${SALDO_CORTE}</td><td data-label="Detalle">Saldo del Excel</td><td data-label="Horas">${fmtN(r.domSaldoH)} h</td>
+      <td data-label="Fecha">Al ${SALDO_HIST_FECHA}</td><td data-label="Detalle">${SALDO_HIST_LABEL}</td><td data-label="Días">${dhHtml(r.domSaldoH)}</td>
       <td data-label="Mes de pago">${monthLabel(s.domSaldoMesPago)}</td>
       <td data-label=""><button class="tiny" data-act="cb-saldo-pago" data-eng="${escH(r.name)}" data-kind="dom">Desmarcar</button></td></tr>` : "")
     + pagados.map(d=>`<tr>
-      <td data-label="Fecha">${d.fecha} · ${diaLabel(d.fecha)}</td><td data-label="Detalle">${escH(d.detalle||d.actividad||"")}</td><td data-label="Horas">${fmtN(d.h)} h</td>
+      <td data-label="Fecha">${d.fecha} · ${diaLabel(d.fecha)}</td><td data-label="Detalle">${escH(d.detalle||d.actividad||"")}</td><td data-label="Días">${dhHtml(d.h)}</td>
       <td data-label="Mes de pago">${d.mesPago?monthLabel(d.mesPago):"—"}</td>
       <td data-label=""><button class="tiny" data-act="cb-dom-pago" data-id="${d._id}">Desmarcar</button></td></tr>`).join("");
   const nPagados = pagados.length + (r.domSaldoH>0 && s.domSaldoMesPago ? 1 : 0);
@@ -1377,25 +1385,25 @@ function renderCompDetalle(r){
   <div class="card" id="cb_detalle">
     <div class="cbhead"><h3 style="margin:0">${escH(r.name)} · Compensatorios</h3><button class="tiny" data-act="cb-open" data-tab="comp" data-eng="${escH(r.name)}">Cerrar</button></div>
     <div class="kpis">
-      <div class="kpi"><div class="kpi-l">Saldo Excel</div><div class="kpi-v">${fmtN(r.compSaldoH)} h</div></div>
-      <div class="kpi"><div class="kpi-l">Generado</div><div class="kpi-v" style="color:var(--ok)">+${fmtN(r.compGenH)} h</div></div>
-      <div class="kpi"><div class="kpi-l">Tomado</div><div class="kpi-v" style="color:var(--bad)">−${fmtN(r.compTomH)} h</div></div>
-      <div class="kpi"><div class="kpi-l">Pendiente</div><div class="kpi-v">${fmtHD(r.compPendH)}</div></div>
+      <div class="kpi"><div class="kpi-l">${SALDO_HIST_LABEL}</div><div class="kpi-v">${dhHtml(r.compSaldoH)}</div></div>
+      <div class="kpi"><div class="kpi-l">Generado</div><div class="kpi-v" style="color:var(--ok)">${dhHtml(r.compGenH,"+")}</div></div>
+      <div class="kpi"><div class="kpi-l">Tomado</div><div class="kpi-v" style="color:var(--bad)">${dhHtml(r.compTomH,"−")}</div></div>
+      <div class="kpi"><div class="kpi-l">Pendiente</div><div class="kpi-v">${dhHtml(r.compPendH)}</div></div>
     </div>
 
-    <h4 class="cbh">Domingos y festivos por pagar en dinero (${fmtN(r.domPendH)} h)</h4>
-    ${pagoRows ? cbTable(["Fecha","Día","Detalle","Horas",""], pagoRows) : `<div class="empty">Nada pendiente por pagar.</div>`}
+    <h4 class="cbh">Domingos y festivos por pagar en dinero (${fmtDH(r.domPendH)})</h4>
+    ${pagoRows ? cbTable(["Fecha","Día","Detalle","Días",""], pagoRows) : `<div class="empty">Nada pendiente por pagar.</div>`}
 
     <h4 class="cbh">Movimientos de compensatorio · ${monthLabel(selectedMonth)}</h4>
-    ${movMes.length ? cbTable(["Fecha","Día","Concepto","Horas",""], movMes.map(movRow).join("")) : `<div class="empty">Sin movimientos en este mes.</div>`}
-    ${movOtros.length ? cbFold("comp-otros-"+k, `Movimientos de otros meses (${movOtros.length})`, cbTable(["Fecha","Día","Concepto","Horas",""], movOtros.map(movRow).join(""))) : ""}
-    ${nPagados ? cbFold("comp-pagados-"+k, `Ya pagados en dinero (${nPagados})`, cbTable(["Fecha","Detalle","Horas","Mes de pago",""], pagadosRows)) : ""}
+    ${movMes.length ? cbTable(["Fecha","Día","Concepto","Días",""], movMes.map(movRow).join("")) : `<div class="empty">Sin movimientos en este mes.</div>`}
+    ${movOtros.length ? cbFold("comp-otros-"+k, `Movimientos de otros meses (${movOtros.length})`, cbTable(["Fecha","Día","Concepto","Días",""], movOtros.map(movRow).join(""))) : ""}
+    ${nPagados ? cbFold("comp-pagados-"+k, `Ya pagados en dinero (${nPagados})`, cbTable(["Fecha","Detalle","Días","Mes de pago",""], pagadosRows)) : ""}
 
-    ${cbFold("comp-saldo-"+k, "Saldo inicial del Excel (corregir)", `
-      <div class="hint" style="margin-bottom:8px">${cbExcelHint(r,"comp")} Es lo que traía cada ingeniero antes del ${SALDO_CORTE}.</div>
+    ${cbFold("comp-saldo-"+k, `${SALDO_HIST_LABEL} (corregir)`, `
+      <div class="hint" style="margin-bottom:8px">${cbExcelHint(r,"comp")} Es lo que traía cada ingeniero al ${SALDO_HIST_FECHA}. Escríbelo en <b>días</b> (1 día = ${MAX_HORAS} h).</div>
       <div class="row2">
-        <div><label>Compensatorio pendiente (horas)</label><input type="number" step="0.25" id="saldo_comp_h" value="${fmtN(s.compHoras)}"></div>
-        <div><label>Domingos/festivos por pagar (horas)</label><input type="number" step="0.25" id="saldo_dom_h" value="${fmtN(s.domHoras)}"></div>
+        <div><label>Compensatorio pendiente (días)</label><input type="number" step="any" id="saldo_comp_d" value="${Math.round(hToD(s.compHoras)*10000)/10000}"></div>
+        <div><label>Domingos/festivos por pagar (días)</label><input type="number" step="any" id="saldo_dom_d" value="${Math.round(hToD(s.domHoras)*10000)/10000}"></div>
       </div>
       <button class="primary" data-act="cb-save-saldo" data-eng="${escH(r.name)}" data-kind="comp">Guardar saldo</button>`)}
   </div>`;
@@ -1416,7 +1424,7 @@ function renderBonos(){
     </div>`).join("");
   let html = `${cbTop()}
   <div class="card">
-    <div class="admin-note">Suma <b>1 día</b> por cada fecha en que el ingeniero registra <b>"${ACTIVIDAD_CAMPO}"</b> con horas (sábados y domingos incluidos). <b>No suman</b> el día de viaje (movilización) ni el domingo o festivo que se paga en dinero. Cuenta desde el ${SALDO_CORTE}; lo anterior viene del Excel.</div>
+    <div class="admin-note">Suma <b>1 día</b> por cada fecha en que el ingeniero registra <b>"${ACTIVIDAD_CAMPO}"</b> con horas (sábados y domingos incluidos). <b>No suman</b> el día de viaje (movilización) ni el domingo o festivo que se paga en dinero. Cuenta desde el ${SALDO_CORTE}; lo anterior es el saldo histórico.</div>
     <div class="cbgrid">${cards || '<div class="empty">Sin ingenieros configurados.</div>'}</div>
   </div>`;
   const r = res[bonoSel];
@@ -1430,7 +1438,7 @@ function renderBonoDetalle(r){
   const excelPend = r.bonoSaldo>0 && !s.bonoSaldoMesPago;
   const pend = r.dias.filter(x=>!x.pagado);
   const pendRows = (excelPend ? `<tr>
-      <td data-label="Fecha">Antes del ${SALDO_CORTE}</td><td data-label="Día">—</td><td data-label="Proyecto">Saldo del Excel</td>
+      <td data-label="Fecha">Al ${SALDO_HIST_FECHA}</td><td data-label="Día">—</td><td data-label="Proyecto">${SALDO_HIST_LABEL}</td>
       <td data-label="Días">${fmtN(r.bonoSaldo)} d</td>
       <td data-label=""><button class="tiny ok" data-act="cb-saldo-pago" data-eng="${escH(r.name)}" data-kind="bono">Marcar pagado</button></td></tr>` : "")
     + pend.map(x=>`<tr>
@@ -1440,7 +1448,7 @@ function renderBonoDetalle(r){
   const pag = r.dias.filter(x=>x.pagado);
   const excelPag = r.bonoSaldo>0 && s.bonoSaldoMesPago;
   const pagRows = (excelPag ? `<tr>
-      <td data-label="Fecha">Antes del ${SALDO_CORTE}</td><td data-label="Proyecto">Saldo del Excel</td><td data-label="Días">${fmtN(r.bonoSaldo)} d</td>
+      <td data-label="Fecha">Al ${SALDO_HIST_FECHA}</td><td data-label="Proyecto">${SALDO_HIST_LABEL}</td><td data-label="Días">${fmtN(r.bonoSaldo)} d</td>
       <td data-label="Mes de pago">${monthLabel(s.bonoSaldoMesPago)}</td>
       <td data-label=""><button class="tiny" data-act="cb-saldo-pago" data-eng="${escH(r.name)}" data-kind="bono">Desmarcar</button></td></tr>` : "")
     + pag.map(x=>`<tr>
@@ -1456,7 +1464,7 @@ function renderBonoDetalle(r){
   <div class="card" id="cb_detalle">
     <div class="cbhead"><h3 style="margin:0">${escH(r.name)} · Bonos de campo</h3><button class="tiny" data-act="cb-open" data-tab="bono" data-eng="${escH(r.name)}">Cerrar</button></div>
     <div class="kpis">
-      <div class="kpi"><div class="kpi-l">Saldo Excel</div><div class="kpi-v">${fmtN(r.bonoSaldo)} d</div></div>
+      <div class="kpi"><div class="kpi-l">${SALDO_HIST_LABEL}</div><div class="kpi-v">${fmtN(r.bonoSaldo)} d</div></div>
       <div class="kpi"><div class="kpi-l">Días en campo (app)</div><div class="kpi-v">${r.dias.length} d</div></div>
       <div class="kpi"><div class="kpi-l">Pagados</div><div class="kpi-v" style="color:var(--ok)">${fmtN(r.bonoPag)} d</div></div>
       <div class="kpi"><div class="kpi-l">Pendientes</div><div class="kpi-v">${fmtN(r.bonoPend)} d</div></div>
@@ -1467,8 +1475,8 @@ function renderBonoDetalle(r){
     ${nPag ? cbFold("bono-pagados-"+k, `Ya pagados (${nPag})`, cbTable(["Fecha","Proyecto","Días","Mes de pago",""], pagRows)) : ""}
     ${r.noSuman.length ? cbFold("bono-nosuman-"+k, `Días en campo que no suman bono (${r.noSuman.length})`, cbTable(["Fecha","Proyecto","Motivo"], noRows)) : ""}
 
-    ${cbFold("bono-saldo-"+k, "Saldo inicial del Excel (corregir)", `
-      <div class="hint" style="margin-bottom:8px">${cbExcelHint(r,"bono")} Son los días que traía antes del ${SALDO_CORTE}, sin fecha en la app.</div>
+    ${cbFold("bono-saldo-"+k, `${SALDO_HIST_LABEL} (corregir)`, `
+      <div class="hint" style="margin-bottom:8px">${cbExcelHint(r,"bono")} Son los días que traía al ${SALDO_HIST_FECHA}, sin fecha en la app.</div>
       <label>Días de bono pendientes</label><input type="number" step="1" id="saldo_bono_d" value="${fmtN(s.bonoDias)}">
       <button class="primary" data-act="cb-save-saldo" data-eng="${escH(r.name)}" data-kind="bono">Guardar saldo</button>`)}
   </div>`;
@@ -1512,14 +1520,15 @@ async function cbToggleSaldoPago(engineer, kind){
   const s = saldoDe(engineer);
   const campo = kind==="dom" ? "domSaldoMesPago" : "bonoSaldoMesPago";
   const mes = s[campo] ? "" : (selectedMonth < SALDO_CORTE.slice(0,7) ? SALDO_CORTE.slice(0,7) : selectedMonth);
-  try{ await cbWriteSaldo(engineer, { [campo]: mes }); showMsg(mes ? `Saldo del Excel marcado como pagado en ${monthLabel(mes)}.` : "Saldo del Excel vuelve a pendiente.", "ok"); }
+  try{ await cbWriteSaldo(engineer, { [campo]: mes }); showMsg(mes ? `Saldo histórico marcado como pagado en ${monthLabel(mes)}.` : "Saldo histórico vuelve a pendiente.", "ok"); }
   catch(err){ showMsg(CB_ERR + (err.message||err.code), "bad"); render(); }
 }
 async function cbSaveSaldo(engineer, kind){
   const num = id=>{ const el=document.getElementById(id); const v = el ? el.value.trim() : ""; return v==="" ? 0 : Number(v); };
-  const patch = kind==="comp" ? { compHoras: num("saldo_comp_h"), domHoras: num("saldo_dom_h") } : { bonoDias: num("saldo_bono_d") };
+  // Compensatorio: se escribe en días y se guarda en horas (días × 8.5)
+  const patch = kind==="comp" ? { compHoras: num("saldo_comp_d")*MAX_HORAS, domHoras: num("saldo_dom_d")*MAX_HORAS } : { bonoDias: num("saldo_bono_d") };
   if(Object.values(patch).some(v=>isNaN(v))){ showMsg("Revisa los números del saldo.", "bad"); return; }
-  try{ await cbWriteSaldo(engineer, patch); showMsg("Saldo inicial guardado.", "ok"); }
+  try{ await cbWriteSaldo(engineer, patch); showMsg("Saldo histórico guardado.", "ok"); }
   catch(err){ showMsg(CB_ERR + (err.message||err.code), "bad"); }
 }
 
@@ -1559,27 +1568,27 @@ async function downloadCompBonosReport(){
   body += wp("INFORME DE COMPENSATORIOS Y BONOS DE CAMPO", {bold:true, color:"1F4E78", size:32, after:40});
   body += wp("Área de Proyectos", {bold:true, color:"6B7280", size:24, after:20});
   body += wp(`Periodo: ${monthLabel(ym)}   ·   Generado: ${new Date().toLocaleDateString("es-CO",{day:"numeric",month:"long",year:"numeric"})}`, {italics:true, color:"6B7280", size:20, after:200});
-  body += wp(`Criterios: toda hora extra genera compensatorio, excepto domingos y festivos reconocidos como pago en dinero; la movilización a campo siempre se compensa. Cada día registrado como "Compensatorio" se descuenta del saldo. El bono de campo suma un día por cada fecha laborada en campo (actividad "${ACTIVIDAD_CAMPO}"); no suman los días de viaje ni los domingos o festivos pagados en dinero. Saldos iniciales tomados del Control Integral de Ingenieros (Excel) con corte al ${SALDO_CORTE}. Un día equivale a ${MAX_HORAS} horas.`, {size:18, color:"374151", after:200});
+  body += wp(`Criterios: toda hora extra genera compensatorio, excepto domingos y festivos reconocidos como pago en dinero; la movilización a campo siempre se compensa. Cada día registrado como "Compensatorio" se descuenta del saldo. El bono de campo suma un día por cada fecha laborada en campo (actividad "${ACTIVIDAD_CAMPO}"); no suman los días de viaje ni los domingos o festivos pagados en dinero. Los saldos históricos corresponden al control anterior con corte al ${SALDO_HIST_FECHA}. Los compensatorios se expresan en días (1 día = ${MAX_HORAS} horas) y entre paréntesis en horas.`, {size:18, color:"374151", after:200});
 
   // 1. Compensatorios
   body += wHeading("1. Compensatorios");
-  body += wp("1.1 Saldo de compensatorio por colaborador (horas)", {bold:true, size:19, after:80});
-  body += wTable(["Colaborador","Saldo al inicio","Generado en el mes","Tomado en el mes","Saldo al cierre","Cierre (días)"], [2280,1560,1560,1560,1560,1560],
-    rows.map(({r,m})=>[r.name, fmtN(m.compIni)+" h", "+"+fmtN(m.compGen)+" h", "−"+fmtN(m.compTom)+" h", fmtN(m.compFin)+" h", d(m.compFin)+" d"]));
-  body += wp("1.2 Domingos y festivos por pagar en dinero (horas)", {bold:true, size:19, after:80});
+  body += wp("1.1 Saldo de compensatorio por colaborador (días)", {bold:true, size:19, after:80});
+  body += wTable(["Colaborador","Saldo al inicio","Generado en el mes","Tomado en el mes","Saldo al cierre"], [2080,2000,2000,2000,2000],
+    rows.map(({r,m})=>[r.name, fmtDH(m.compIni), "+"+fmtDH(m.compGen), "−"+fmtDH(m.compTom), fmtDH(m.compFin)]));
+  body += wp("1.2 Domingos y festivos por pagar en dinero (días)", {bold:true, size:19, after:80});
   body += wTable(["Colaborador","Pendiente al inicio","Generado en el mes","Pagado en el mes","Pendiente al cierre"], [2480,1900,1900,1900,1900],
-    rows.map(({r,m})=>[r.name, fmtN(m.domIni)+" h", "+"+fmtN(m.domGen)+" h", "−"+fmtN(m.domPag)+" h", fmtN(m.domFin)+" h"]));
+    rows.map(({r,m})=>[r.name, fmtDH(m.domIni), "+"+fmtDH(m.domGen), "−"+fmtDH(m.domPag), fmtDH(m.domFin)]));
   const compMovs = [];
   rows.forEach(({r,m})=>{
-    r.tiempo.filter(x=>m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, esMovilizacion(x) ? "Extra · movilización → compensatorio" : "Extra → compensatorio", "+"+fmtN(x.h)+" h"]));
-    r.tomados.filter(x=>m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, "Compensatorio tomado", "−"+fmtN(x.h)+" h"]));
-    r.pago.filter(x=>m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, "Extra domingo/festivo → pago en dinero" + (x.pagado ? ` (pagado ${monthLabel(x.mesPago)})` : " (pendiente)"), fmtN(x.h)+" h"]));
-    r.pago.filter(x=>x.pagado && x.mesPago===ym && !m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, "Pago en dinero de domingo/festivo anterior", fmtN(x.h)+" h"]));
-    if(r.saldo.domSaldoMesPago===ym && r.domSaldoH>0) compMovs.push(["—", "—", r.name, "Pago de domingos del saldo Excel", fmtN(r.domSaldoH)+" h"]);
+    r.tiempo.filter(x=>m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, esMovilizacion(x) ? "Extra · movilización → compensatorio" : "Extra → compensatorio", "+"+fmtDH(x.h)]));
+    r.tomados.filter(x=>m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, "Compensatorio tomado", "−"+fmtDH(x.h)]));
+    r.pago.filter(x=>m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, "Extra domingo/festivo → pago en dinero" + (x.pagado ? ` (pagado ${monthLabel(x.mesPago)})` : " (pendiente)"), fmtDH(x.h)]));
+    r.pago.filter(x=>x.pagado && x.mesPago===ym && !m.inMes(x.fecha)).forEach(x=>compMovs.push([x.fecha, diaLabel(x.fecha), r.name, "Pago en dinero de domingo/festivo anterior", fmtDH(x.h)]));
+    if(r.saldo.domSaldoMesPago===ym && r.domSaldoH>0) compMovs.push(["—", "—", r.name, "Pago de domingos del saldo histórico", fmtDH(r.domSaldoH)]);
   });
   compMovs.sort((a,b)=> a[2].localeCompare(b[2]) || a[0].localeCompare(b[0]));
   body += wp("1.3 Detalle de movimientos del mes", {bold:true, size:19, after:80});
-  body += compMovs.length ? wTable(["Fecha","Día","Colaborador","Concepto","Horas"], [1300,1200,1900,4380,1300], compMovs)
+  body += compMovs.length ? wTable(["Fecha","Día","Colaborador","Concepto","Días"], [1300,1100,1800,4080,1800], compMovs)
     : wp("Sin movimientos de compensatorio en el periodo.", {italics:true, color:"6B7280"});
 
   // 2. Bonos de campo
@@ -1592,7 +1601,7 @@ async function downloadCompBonosReport(){
     r.dias.filter(x=>m.inMes(x.fecha)).forEach(x=>bonoMovs.push([x.fecha, diaLabel(x.fecha), r.name, x.proyecto||"—", x.pagado ? `Pagado (${monthLabel(x.mesPago)})` : "Pendiente"]));
     r.dias.filter(x=>x.pagado && x.mesPago===ym && !m.inMes(x.fecha)).forEach(x=>bonoMovs.push([x.fecha, diaLabel(x.fecha), r.name, x.proyecto||"—", "Pago en este mes (día de un mes anterior)"]));
     r.noSuman.filter(x=>m.inMes(x.fecha)).forEach(x=>bonoMovs.push([x.fecha, diaLabel(x.fecha), r.name, x.proyecto||"—", "No suma: domingo/festivo pagado en dinero"]));
-    if(r.saldo.bonoSaldoMesPago===ym && r.bonoSaldo>0) bonoMovs.push(["—", "—", r.name, "Saldo del Excel", `Pago de ${fmtN(r.bonoSaldo)} días`]);
+    if(r.saldo.bonoSaldoMesPago===ym && r.bonoSaldo>0) bonoMovs.push(["—", "—", r.name, "Saldo histórico", `Pago de ${fmtN(r.bonoSaldo)} días`]);
   });
   bonoMovs.sort((a,b)=> a[2].localeCompare(b[2]) || a[0].localeCompare(b[0]));
   body += wp("2.2 Detalle de días en campo y pagos del mes", {bold:true, size:19, after:80});
