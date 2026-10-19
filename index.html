@@ -317,6 +317,15 @@ const MAX_EXTRA = 8.5;
 const TIPOS_HORA = ["Normal","Extra","Vacaciones","Compensatorio","Incapacidad","Permiso","Licencia"];
 const AUSENCIA_TYPES = ["Vacaciones","Compensatorio","Incapacidad","Permiso","Licencia"];
 const TIPO_MAX = { "Normal": MAX_HORAS, "Extra": MAX_EXTRA, "Vacaciones": MAX_HORAS, "Compensatorio": MAX_HORAS, "Incapacidad": MAX_HORAS, "Permiso": MAX_HORAS, "Licencia": MAX_HORAS };
+const EXTRA_SUBTYPES = ["Trabajo normal", "Movilización a campo"];
+// Día de la semana (0=domingo..6=sábado) de una fecha "YYYY-MM-DD", calculado en UTC
+// para que no dependa de la zona horaria del navegador.
+function weekdayOf(fechaStr){
+  if(!fechaStr) return null;
+  const parts = fechaStr.split("-").map(Number);
+  if(parts.length!==3 || parts.some(isNaN)) return null;
+  return new Date(Date.UTC(parts[0], parts[1]-1, parts[2])).getUTCDay();
+}
 const SIN_PROYECTO = "Sin proyecto / servicio activo";
 const POR_DEFINIR = "Por definir";
 let db = null, downloadsCap = null, isOwner = false;
@@ -465,6 +474,10 @@ function renderForm(){
           <div><label>% de Avance</label><input type="number" id="f_pct" min="0" max="100" step="1" placeholder="0-100"></div>
         </div>
       </div>
+      ${selectedTipoHora==="Extra" ? `
+      <label>Tipo de hora extra</label>
+      <select id="f_extra_sub">${EXTRA_SUBTYPES.map(t=>`<option value="${t}">${t}</option>`).join("")}</select>
+      ` : ""}
       <label id="horas_label">Horas (máx. ${TIPO_MAX[selectedTipoHora]} h/día${selectedTipoHora==="Normal"?" — no incluye horas extra":""})</label>
       <input type="number" id="f_horas" min="0" max="${TIPO_MAX[selectedTipoHora]}" step="0.5" required>
       <label>${AUSENCIA_TYPES.includes(selectedTipoHora) ? "Motivo / observación" : "Observaciones"} <span class="hint">${AUSENCIA_TYPES.includes(selectedTipoHora) ? "(opcional)" : "(solo si algo te está bloqueando — el contexto de la actividad va en \"Detalle\")"}</span></label>
@@ -489,9 +502,10 @@ function renderMyTable(){
       : `<button class="tiny" data-act="edit-activity" data-id="${d._id}">Editar</button> <button class="del" data-act="ask-del-activity" data-id="${d._id}">Eliminar</button>`;
     const isEditing = editingId === d._id;
     const tipo = d.tipoHora || "Normal";
+    const tipoLabel = (tipo==="Extra" && d.extraTipo) ? `Extra · ${d.extraTipo}` : tipo;
     return `<tr${isEditing ? ' style="background:var(--accent)"' : ''}>
       <td data-label="Fecha">${d.fecha||""}</td>
-      <td data-label="Tipo">${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipo}</span>`}</td>
+      <td data-label="Tipo">${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipoLabel}</span>`}</td>
       <td data-label="Actividad">${d.actividad||""}</td>
       <td data-label="Detalle">${d.detalle||""}</td>
       <td data-label="Proyecto">${d.proyecto||""}</td>
@@ -736,7 +750,7 @@ function wireEvents(){
     selectedTipoHora = e.target.value;
     render();
     const horasEl = document.getElementById("f_horas");
-    if(horasEl && AUSENCIA_TYPES.includes(selectedTipoHora) && !horasEl.value){ horasEl.value = 8.5; }
+    if(horasEl && AUSENCIA_TYPES.includes(selectedTipoHora) && !horasEl.value){ horasEl.value = MAX_HORAS; }
   };
   // required dinámico: los campos de trabajo no son obligatorios si el tipo de hora es una ausencia
   const isWork = !AUSENCIA_TYPES.includes(selectedTipoHora);
@@ -827,6 +841,8 @@ async function handleAction(act, ds){
     document.getElementById("f_pct").value = d.pct!=null?d.pct:"";
     document.getElementById("f_horas").value = d.horas!=null?d.horas:"";
     document.getElementById("f_obs").value = d.obs||"";
+    const extraSubEl = document.getElementById("f_extra_sub");
+    if(extraSubEl) extraSubEl.value = d.extraTipo || "Trabajo normal";
     document.getElementById("entry_form").scrollIntoView({behavior:"smooth", block:"start"});
     return;
   }
@@ -849,6 +865,11 @@ async function onSubmit(ev){
   const isWork = !AUSENCIA_TYPES.includes(tipoHora);
   const horas = Number(document.getElementById("f_horas").value);
   const obs = document.getElementById("f_obs").value.trim();
+  let extraTipo = null;
+  if(tipoHora==="Extra"){
+    const extraSubEl = document.getElementById("f_extra_sub");
+    extraTipo = extraSubEl ? extraSubEl.value : "Trabajo normal";
+  }
 
   let actividad, detalle, proyecto, estado, pct;
   if(isWork){
@@ -881,7 +902,7 @@ async function onSubmit(ev){
     }
     if(editingId){
       await db.doc("activities/"+editingId).update({
-        engineer: selectedEngineer, fecha, tipoHora, actividad, detalle, proyecto, estado, pct, horas, obs
+        engineer: selectedEngineer, fecha, tipoHora, actividad, detalle, proyecto, estado, pct, horas, obs, extraTipo
         // taskId no se toca al editar: un registro pasado siempre sigue perteneciendo a la misma tarea
       });
       showMsg("Registro actualizado correctamente.", "ok");
@@ -889,7 +910,7 @@ async function onSubmit(ev){
     } else {
       const taskId = isWork ? (selectedTaskOption || newTaskId()) : null;
       await db.collection("activities").add({
-        engineer: selectedEngineer, fecha, tipoHora, actividad, detalle, proyecto, estado, pct, horas, obs, taskId,
+        engineer: selectedEngineer, fecha, tipoHora, actividad, detalle, proyecto, estado, pct, horas, obs, taskId, extraTipo,
         createdAt: new Date().toISOString()
       });
       showMsg("Registro guardado correctamente.", "ok");
@@ -1184,6 +1205,22 @@ function buildReportData(){
   const byAct = {}; allEntries.forEach(d=>{ const k=d.actividad||"(sin definir)"; if(!byAct[k]) byAct[k]={h:0,n:0}; byAct[k].h+=(d.horas||0); byAct[k].n++; });
   const byProy = {}; allEntries.forEach(d=>{ const k=d.proyecto||"(sin definir)"; if(!byProy[k]) byProy[k]={h:0,n:0}; byProy[k].h+=(d.horas||0); byProy[k].n++; });
   const byTipoHora = {}; allEntries.forEach(d=>{ const k=d.tipoHora||"Normal"; if(!byTipoHora[k]) byTipoHora[k]={h:0,n:0}; byTipoHora[k].h+=(d.horas||0); byTipoHora[k].n++; });
+  // Horas extra: trabajo normal vs. movilización a campo (dato nuevo; los registros
+  // viejos sin este campo se cuentan como "Trabajo normal" por compatibilidad).
+  const byExtraSubtipo = {};
+  allEntries.forEach(d=>{
+    if((d.tipoHora||"Normal")!=="Extra") return;
+    const k = d.extraTipo || "Trabajo normal";
+    if(!byExtraSubtipo[k]) byExtraSubtipo[k] = {h:0,n:0};
+    byExtraSubtipo[k].h += (d.horas||0); byExtraSubtipo[k].n++;
+  });
+  // Trabajo en fines de semana: para que gerencia identifique quién trabajó sábado/domingo.
+  const trabajoFinDeSemana = allEntries.filter(d=> (d.horas||0)>0 && (weekdayOf(d.fecha)===6 || weekdayOf(d.fecha)===0))
+    .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  const sabados = trabajoFinDeSemana.filter(d=>weekdayOf(d.fecha)===6);
+  const domingos = trabajoFinDeSemana.filter(d=>weekdayOf(d.fecha)===0);
+  const ingenierosSabado = [...new Set(sabados.map(d=>d.engineer))];
+  const ingenierosDomingo = [...new Set(domingos.map(d=>d.engineer))];
   // Clasificación por convención de código: 3XXX Proyecto, 2XXX Servicio, 0XXX Capacitación
   const byCategoria = {};
   const codigosPorCategoria = {};
@@ -1213,7 +1250,8 @@ function buildReportData(){
   const horasApoyo = Math.max(0, totalHoras - horasEnProyectos);
   const statusCounts = { "Buen ritmo":0, "En progreso":0, "Rezagado":0, "Sin registros":0, "Sin datos":0 };
   porEng.forEach(e=>{ statusCounts[e.estado] = (statusCounts[e.estado]||0)+1; });
-  return { start, end, porEng, byAct, byProy, byTipoHora, byCategoria, codigosPorCategoria, novedades, bloqueos, notasAdicionales, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
+  return { start, end, porEng, byAct, byProy, byTipoHora, byExtraSubtipo, byCategoria, codigosPorCategoria, novedades, bloqueos, notasAdicionales, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
+    sabados, domingos, ingenierosSabado, ingenierosDomingo,
     totalHoras, totalRegistros: porEng.reduce((s,e)=>s+e.n,0),
     sinRegistros: porEng.filter(e=>e.n===0).map(e=>e.name) };
 }
@@ -1235,6 +1273,10 @@ async function downloadCsvReport(){
   lines.push("Tipo,Horas,Registros");
   Object.keys(r.byTipoHora).sort((a,b)=>r.byTipoHora[b].h-r.byTipoHora[a].h).forEach(k=>lines.push([k,r.byTipoHora[k].h.toFixed(1),r.byTipoHora[k].n].map(csvEsc).join(",")));
   lines.push("");
+  lines.push("HORAS EXTRA: TRABAJO NORMAL VS MOVILIZACION A CAMPO");
+  lines.push("Tipo de hora extra,Horas,Registros");
+  Object.keys(r.byExtraSubtipo).sort((a,b)=>r.byExtraSubtipo[b].h-r.byExtraSubtipo[a].h).forEach(k=>lines.push([k,r.byExtraSubtipo[k].h.toFixed(1),r.byExtraSubtipo[k].n].map(csvEsc).join(",")));
+  lines.push("");
   lines.push("HORAS POR TIPO DE ACTIVIDAD");
   lines.push("Actividad,Horas,Registros");
   Object.keys(r.byAct).sort((a,b)=>r.byAct[b].h-r.byAct[a].h).forEach(k=>lines.push([k,r.byAct[k].h.toFixed(1),r.byAct[k].n].map(csvEsc).join(",")));
@@ -1250,6 +1292,16 @@ async function downloadCsvReport(){
   lines.push("NOTAS Y OBSERVACIONES ADICIONALES (no son bloqueos)");
   lines.push("Fecha,Ingeniero,Actividad,Estado,Observacion");
   r.notasAdicionales.forEach(d=>lines.push([d.fecha,d.engineer,d.actividad,d.estado,d.obs||""].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("TRABAJO EN SABADO");
+  lines.push(`Colaboradores: ${r.ingenierosSabado.join(" | ") || "ninguno"}`);
+  lines.push("Fecha,Ingeniero,Tipo de hora,Horas,Actividad");
+  r.sabados.forEach(d=>lines.push([d.fecha,d.engineer,(d.tipoHora==="Extra"&&d.extraTipo)?`Extra - ${d.extraTipo}`:(d.tipoHora||"Normal"),(d.horas||0).toFixed(1),d.actividad||""].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("TRABAJO EN DOMINGO");
+  lines.push(`Colaboradores: ${r.ingenierosDomingo.join(" | ") || "ninguno"}`);
+  lines.push("Fecha,Ingeniero,Tipo de hora,Horas,Actividad");
+  r.domingos.forEach(d=>lines.push([d.fecha,d.engineer,(d.tipoHora==="Extra"&&d.extraTipo)?`Extra - ${d.extraTipo}`:(d.tipoHora||"Normal"),(d.horas||0).toFixed(1),d.actividad||""].map(csvEsc).join(",")));
 
   const csv = "\uFEFF" + lines.join("\n");
   try{ await downloadsCap.save({ filename: `Reporte_Actividades_${selectedMonth}.csv`, data: csv }); showMsg("CSV descargado.", "ok"); }
@@ -1434,6 +1486,11 @@ async function downloadWordReport(){
   body += wHeading("5. Horas por tipo de hora (Normal, Extra, Vacaciones, etc.)");
   const tipoRows = Object.keys(r.byTipoHora).sort((a,b)=>r.byTipoHora[b].h-r.byTipoHora[a].h).map(k=>[k, r.byTipoHora[k].h.toFixed(1)+" h", String(r.byTipoHora[k].n)]);
   body += tipoRows.length ? wTable(["Tipo de hora","Horas","Registros"],[2400,1300,1300],tipoRows) : wp("Sin datos en el periodo.",{italics:true,color:"6B7280"});
+  if(Object.keys(r.byExtraSubtipo).length){
+    body += wp("Detalle de horas extra: trabajo normal vs. movilización a campo", {bold:true, size:19, after:80});
+    const extraRows = Object.keys(r.byExtraSubtipo).sort((a,b)=>r.byExtraSubtipo[b].h-r.byExtraSubtipo[a].h).map(k=>[k, r.byExtraSubtipo[k].h.toFixed(1)+" h", String(r.byExtraSubtipo[k].n)]);
+    body += wTable(["Tipo de hora extra","Horas","Registros"],[2400,1300,1300],extraRows);
+  }
 
   body += wHeading("6. Horas por tipo de actividad");
   const actRows = Object.keys(r.byAct).sort((a,b)=>r.byAct[b].h-r.byAct[a].h).map(k=>[k, r.byAct[k].h.toFixed(1)+" h", String(r.byAct[k].n)]);
@@ -1451,7 +1508,21 @@ async function downloadWordReport(){
         r.notasAdicionales.map(d=>[d.fecha,d.engineer,d.actividad,d.estado,d.obs||""]))
     : wp("Sin notas adicionales en el periodo.", {italics:true,color:"6B7280"});
 
-  body += wHeading("8. Conclusiones y recomendaciones");
+  body += wHeading("8. Trabajo en fines de semana (sábados y domingos)");
+  body += wp(`Colaboradores que registraron horas en sábado: ${r.ingenierosSabado.length ? r.ingenierosSabado.join(", ") : "ninguno"}.`, {after:60});
+  body += wp(`Colaboradores que registraron horas en domingo: ${r.ingenierosDomingo.length ? r.ingenierosDomingo.join(", ") : "ninguno"}.`, {after:160});
+  body += wp("8.1 Detalle de sábados trabajados", {bold:true, size:19, after:80});
+  body += r.sabados.length
+    ? wTable(["Fecha","Colaborador","Tipo de hora","Horas","Actividad"],[1200,1600,1500,1000,2500],
+        r.sabados.map(d=>[d.fecha, d.engineer, (d.tipoHora==="Extra"&&d.extraTipo)?`Extra · ${d.extraTipo}`:(d.tipoHora||"Normal"), (d.horas||0).toFixed(1)+" h", d.actividad||""]))
+    : wp("No se registraron horas en sábado durante el periodo.", {italics:true,color:"6B7280"});
+  body += wp("8.2 Detalle de domingos trabajados", {bold:true, size:19, after:80});
+  body += r.domingos.length
+    ? wTable(["Fecha","Colaborador","Tipo de hora","Horas","Actividad"],[1200,1600,1500,1000,2500],
+        r.domingos.map(d=>[d.fecha, d.engineer, (d.tipoHora==="Extra"&&d.extraTipo)?`Extra · ${d.extraTipo}`:(d.tipoHora||"Normal"), (d.horas||0).toFixed(1)+" h", d.actividad||""]))
+    : wp("No se registraron horas en domingo durante el periodo.", {italics:true,color:"6B7280"});
+
+  body += wHeading("9. Conclusiones y recomendaciones");
   body += wBullet(r.proyectosActivos.length
     ? "Formalizar el seguimiento de los proyectos, servicios y capacitaciones activos, y mantener el registro diario para controlar el avance real frente al estimado."
     : "Dado que no hay proyectos activos, se recomienda formalizar la asignación de actividades de apoyo a otras áreas para los colaboradores con menor carga registrada.");
