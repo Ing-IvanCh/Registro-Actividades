@@ -326,6 +326,43 @@ function weekdayOf(fechaStr){
   if(parts.length!==3 || parts.some(isNaN)) return null;
   return new Date(Date.UTC(parts[0], parts[1]-1, parts[2])).getUTCDay();
 }
+// Festivos de Colombia (copiados de la hoja FESTIVOS del "Control Integral Ingenieros").
+// Para años nuevos basta con agregar las fechas aquí.
+const FESTIVOS_CO = {
+  "2025-12-08":"Inmaculada Concepción","2025-12-25":"Navidad",
+  "2026-01-01":"Año Nuevo","2026-01-12":"Reyes Magos","2026-03-23":"San José","2026-04-02":"Jueves Santo","2026-04-03":"Viernes Santo",
+  "2026-05-01":"Día del Trabajo","2026-05-18":"Ascensión del Señor","2026-06-08":"Corpus Christi","2026-06-15":"Sagrado Corazón",
+  "2026-06-29":"San Pedro y San Pablo","2026-07-13":"Virgen del Carmen / Chiquinquirá","2026-07-20":"Independencia de Colombia",
+  "2026-08-07":"Batalla de Boyacá","2026-08-17":"Asunción de la Virgen","2026-10-12":"Día de la Raza","2026-11-02":"Todos los Santos",
+  "2026-11-16":"Independencia de Cartagena","2026-12-08":"Inmaculada Concepción","2026-12-25":"Navidad",
+  "2027-01-01":"Año Nuevo","2027-01-11":"Reyes Magos","2027-03-22":"San José","2027-03-25":"Jueves Santo","2027-03-26":"Viernes Santo",
+  "2027-05-01":"Día del Trabajo","2027-05-10":"Ascensión del Señor","2027-05-31":"Corpus Christi","2027-06-07":"Sagrado Corazón",
+  "2027-07-05":"San Pedro y San Pablo","2027-07-12":"Virgen de Chiquinquirá","2027-07-20":"Independencia de Colombia",
+  "2027-08-07":"Batalla de Boyacá","2027-08-16":"Asunción de la Virgen","2027-10-18":"Día de la Raza","2027-11-01":"Todos los Santos",
+  "2027-11-15":"Independencia de Cartagena","2027-12-08":"Inmaculada Concepción","2027-12-25":"Navidad",
+  "2028-01-01":"Año Nuevo","2028-01-10":"Reyes Magos","2028-03-20":"San José","2028-04-13":"Jueves Santo","2028-04-14":"Viernes Santo",
+  "2028-05-01":"Día del Trabajo","2028-05-29":"Ascensión del Señor","2028-06-19":"Corpus Christi","2028-06-26":"Sagrado Corazón",
+  "2028-07-03":"San Pedro y San Pablo","2028-07-10":"Virgen de Chiquinquirá","2028-07-20":"Independencia de Colombia",
+  "2028-08-07":"Batalla de Boyacá","2028-08-21":"Asunción de la Virgen","2028-10-16":"Día de la Raza","2028-11-06":"Todos los Santos",
+  "2028-11-13":"Independencia de Cartagena","2028-12-08":"Inmaculada Concepción","2028-12-25":"Navidad"
+};
+const ACTIVIDAD_CAMPO = "Servicio (en campo)";
+const DIAS_SEMANA = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+function esFestivo(f){ return !!FESTIVOS_CO[f]; }
+function esDominical(f){ return weekdayOf(f)===0 || esFestivo(f); }  // domingo o festivo (igual que el Excel)
+function diaLabel(f){
+  const w = weekdayOf(f); if(w==null) return "";
+  return esFestivo(f) ? `${DIAS_SEMANA[w]} · Festivo` : DIAS_SEMANA[w];
+}
+// Saldos de la hoja "Resumen Bonos y Compensat." del Excel, solo como referencia para el saldo anterior.
+const EXCEL_SALDOS_REF = {
+  edison:   {nombre:"Edison Acosta",    compDias:7.25,    bonoDias:46, domingosDias:2},
+  nicolas:  {nombre:"Nicolas Espitia",  compDias:0,       bonoDias:43, domingosDias:0},
+  lina:     {nombre:"Lina Angel",       compDias:1,       bonoDias:3,  domingosDias:0},
+  martinri: {nombre:"Martinri Savedra", compDias:17.9625, bonoDias:46, domingosDias:0},
+  ivan:     {nombre:"Ivan Chipiaje",    compDias:8.375,   bonoDias:30, domingosDias:0}
+};
+function excelRef(name){ return EXCEL_SALDOS_REF[sanitizeId(String(name||"").trim().split(/\s+/)[0])] || null; }
 const SIN_PROYECTO = "Sin proyecto / servicio activo";
 const POR_DEFINIR = "Por definir";
 let db = null, downloadsCap = null, isOwner = false;
@@ -358,6 +395,16 @@ let selectedTipoHora = "Normal";
 let openTasksList = []; // tareas abiertas del ingeniero seleccionado (de cualquier mes)
 let selectedTaskOption = ""; // "" = nueva tarea, o el id de una tarea existente
 let unsubOpenTasks = null;
+// Compensatorios y bonos de campo (solo admin): datos de TODOS los meses
+let compEntries = [];   // actividades Extra + Compensatorio
+let campoEntries = [];  // actividades "Servicio (en campo)"
+let compAjustes = {};   // comp_ajustes/<idActividad>: {tratamiento:"Pago"|"Tiempo", pagado, mesPago}
+let campoPagos = {};    // campo_pagos/<ingeniero_fecha>: {pagado, mesPago}
+let compSaldos = {};    // comp_saldos/<slug ingeniero>: {compDias, bonoDias, domingosDias, desde}
+let compLoaded = {comp:false, campo:false};
+let compUnsubs = [];
+let compEngSel = "";
+let compMesPago = todayStr().slice(0,7);
 
 const app = document.getElementById("app");
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -407,12 +454,13 @@ function render(){
       <div class="tab ${view==='resumen'?'active':''}" data-tab="resumen">Resumen general</div>
       ${isOwner ? `<div class="tab ${view==='equipo'?'active':''}" data-tab="equipo">Equipo (solo tú)</div>` : ""}
       ${isOwner ? `<div class="tab ${view==='proyectos'?'active':''}" data-tab="proyectos">Proyectos (solo tú)</div>` : ""}
+      ${isOwner ? `<div class="tab ${view==='compensatorios'?'active':''}" data-tab="compensatorios">Compensatorios y bonos (solo tú)</div>` : ""}
     </div>
     <div class="toolbar">
       ${(view==='form'||view==='resumen') ? `<div class="monthbox"><label style="margin:0">Mes:</label><input type="month" id="month_sel" value="${selectedMonth}"></div>` : ""}
       <button class="tiny" id="btn_admin_toggle" style="margin-left:auto">${isOwner ? "🔓 Cerrar admin" : "🔒 Admin"}</button>
     </div>
-    ${view==='form' ? renderForm() : view==='resumen' ? renderResumen() : view==='equipo' ? renderEquipo() : renderProyectos()}
+    ${view==='form' ? renderForm() : view==='resumen' ? renderResumen() : view==='equipo' ? renderEquipo() : view==='compensatorios' ? renderCompensatorios() : renderProyectos()}
     ${adminLoginOpen ? `
     <div class="modal-backdrop" id="admin_modal_backdrop">
       <div class="modal-card card">
@@ -697,7 +745,7 @@ function renderProyectos(){
 
 function showMsg(text, type){
   formMsg = text; formMsgType = type;
-  const box = document.getElementById("msgbox") || document.getElementById("msgbox2") || document.getElementById("msgbox3");
+  const box = document.getElementById("msgbox") || document.getElementById("msgbox2") || document.getElementById("msgbox3") || document.getElementById("msgbox4");
   if(box){ box.textContent = text; box.className = "msg " + type; }
 }
 
@@ -812,6 +860,11 @@ function wireEvents(){
   if(btnImportSeed) btnImportSeed.onclick = importSeedData;
   const btnAddPr = document.getElementById("btn_add_pr");
   if(btnAddPr) btnAddPr.onclick = addProject;
+
+  const compEngEl = document.getElementById("comp_eng_sel");
+  if(compEngEl) compEngEl.onchange = (e)=>{ compEngSel = e.target.value; pendingConfirm = null; render(); };
+  const compMesEl = document.getElementById("comp_mes_pago");
+  if(compMesEl) compMesEl.onchange = (e)=>{ compMesPago = e.target.value || todayStr().slice(0,7); render(); };
 }
 
 async function handleAction(act, ds){
@@ -843,6 +896,30 @@ async function handleAction(act, ds){
     const extraSubEl = document.getElementById("f_extra_sub");
     if(extraSubEl) extraSubEl.value = d.extraTipo || "Trabajo normal";
     document.getElementById("entry_form").scrollIntoView({behavior:"smooth", block:"start"});
+    return;
+  }
+
+  if(act === "comp-ver"){
+    compEngSel = ds.eng; pendingConfirm = null; render();
+    const el = document.getElementById("comp_detalle"); if(el) el.scrollIntoView({behavior:"smooth", block:"start"});
+    return;
+  }
+  if(act === "comp-trat"){ await saveAjuste(ds.id, {tratamiento: ds.v, pagado:false, mesPago:""}); return; }
+  if(act === "comp-pago"){
+    const d = compEntries.find(e=>e._id===ds.id); if(!d) return;
+    const pag = !(compAjustes[ds.id] && compAjustes[ds.id].pagado);
+    await saveAjuste(ds.id, {tratamiento: tratamientoDe(d), pagado: pag, mesPago: pag ? compMesPago : ""});
+    return;
+  }
+  if(act === "bono-toggle"){ await toggleBono(ds.eng, ds.fecha); return; }
+  if(act === "ask-bono-all"){ pendingConfirm = {type:"bonoAll", key: ds.eng}; render(); return; }
+  if(act === "confirm-bono-all"){ pendingConfirm = null; await marcarBonosPagados(ds.eng); return; }
+  if(act === "comp-save-saldo"){ await saveSaldo(ds.eng); return; }
+  if(act === "comp-fill-excel"){
+    const ref = excelRef(ds.eng); if(!ref) return;
+    const set = (id,v)=>{ const el=document.getElementById(id); if(el) el.value = v; };
+    set("saldo_comp", ref.compDias); set("saldo_bono", ref.bonoDias); set("saldo_dom", ref.domingosDias);
+    showMsg("Valores del Excel copiados. Revisa la fecha de corte y presiona Guardar saldo.", "ok");
     return;
   }
 
@@ -1095,6 +1172,266 @@ async function addProject(){
   }catch(err){
     showMsg("No se pudo agregar: " + (err.message||err.code), "bad");
   }
+}
+
+// ---------- Compensatorios y bonos de campo ----------
+// Lógica traída del "Control Integral Ingenieros", pero calculada sola a partir de los registros diarios:
+//  · Cada hora Extra genera compensatorio (tiempo), salvo que se reconozca como pago en dinero.
+//  · Por defecto: domingo o festivo = pago en dinero; sábado, entre semana y movilización = compensatorio.
+//    (Movilización nunca es "dominical", igual que en el Excel.) El admin puede cambiar cada caso.
+//  · Compensatorio tomado = registro con tipo de hora "Compensatorio".
+//  · Bono de campo = cada día distinto con "Servicio (en campo)" y horas > 0.
+//  · Días = horas / 8.5 (jornada completa).
+function fmtN(n){ return String(Math.round((Number(n)||0)*100)/100); }
+function escH(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function campoPagoId(engineer, fecha){ return sanitizeId(engineer) + "_" + fecha; }
+function tratamientoDefault(d){
+  if(d.extraTipo === "Movilización a campo") return "Tiempo";
+  return esDominical(d.fecha) ? "Pago" : "Tiempo";
+}
+function tratamientoDe(d){
+  const a = compAjustes[d._id];
+  return (a && a.tratamiento) || tratamientoDefault(d);
+}
+
+function computeCompBonos(){
+  const names = new Set(engineerNames());
+  compEntries.forEach(d=>{ if(d.engineer) names.add(d.engineer); });
+  campoEntries.forEach(d=>{ if(d.engineer) names.add(d.engineer); });
+  const res = {};
+  names.forEach(n=>{
+    const s = compSaldos[slugify(n)] || {};
+    res[n] = { name:n, saldo:s, desde:s.desde||"", extras:[], tomados:[], campoDias:[],
+      hTiempo:0, hPagoPend:0, hPagoPagado:0, hTomadas:0, bonoPend:0, bonoPag:0 };
+  });
+  const cuenta = (r,d)=> d.fecha && (!r.desde || d.fecha >= r.desde);
+  compEntries.forEach(d=>{
+    const r = res[d.engineer]; if(!r || !cuenta(r,d)) return;
+    const h = Number(d.horas)||0;
+    if(d.tipoHora === "Extra"){
+      const aj = compAjustes[d._id] || {};
+      const tratamiento = tratamientoDe(d);
+      const pagado = tratamiento==="Pago" && !!aj.pagado;
+      r.extras.push({...d, tratamiento, pagado, mesPago: aj.mesPago||"", ajustado: !!aj.tratamiento && aj.tratamiento!==tratamientoDefault(d)});
+      if(tratamiento === "Tiempo") r.hTiempo += h;
+      else if(pagado) r.hPagoPagado += h;
+      else r.hPagoPend += h;
+    } else if(d.tipoHora === "Compensatorio"){
+      r.tomados.push(d); r.hTomadas += h;
+    }
+  });
+  const dias = {};
+  campoEntries.forEach(d=>{
+    const r = res[d.engineer]; if(!r || !cuenta(r,d) || !((Number(d.horas)||0) > 0)) return;
+    const k = d.engineer + "|" + d.fecha;
+    if(!dias[k]) dias[k] = { engineer:d.engineer, fecha:d.fecha, horas:0, proyectos:new Set() };
+    dias[k].horas += Number(d.horas)||0;
+    if(d.proyecto) dias[k].proyectos.add(d.proyecto);
+  });
+  Object.values(dias).forEach(x=>{
+    const p = campoPagos[campoPagoId(x.engineer, x.fecha)];
+    x.pagado = !!(p && p.pagado); x.mesPago = (p && p.mesPago) || "";
+    x.proyecto = [...x.proyectos].join(", ");
+    const r = res[x.engineer];
+    r.campoDias.push(x);
+    if(x.pagado) r.bonoPag++; else r.bonoPend++;
+  });
+  const byFechaDesc = (a,b)=> (b.fecha||"").localeCompare(a.fecha||"");
+  Object.values(res).forEach(r=>{
+    r.extras.sort(byFechaDesc); r.tomados.sort(byFechaDesc); r.campoDias.sort(byFechaDesc);
+    r.saldoComp = Number(r.saldo.compDias)||0;
+    r.compGenDias = r.hTiempo / MAX_HORAS;
+    r.compTomDias = r.hTomadas / MAX_HORAS;
+    r.compPendDias = r.saldoComp + r.compGenDias - r.compTomDias;
+    r.domPendDias = (Number(r.saldo.domingosDias)||0) + r.hPagoPend / MAX_HORAS;
+    r.bonoPendTotal = (Number(r.saldo.bonoDias)||0) + r.bonoPend;
+  });
+  return res;
+}
+
+function renderCompensatorios(){
+  if(!(compLoaded.comp && compLoaded.campo)){
+    return `<div class="card"><div class="empty">Cargando compensatorios y bonos de campo…</div></div>`;
+  }
+  const res = computeCompBonos();
+  const order = engineerNames();
+  const list = Object.values(res).sort((a,b)=>{
+    const ia = order.indexOf(a.name), ib = order.indexOf(b.name);
+    return ((ia<0?999:ia) - (ib<0?999:ib)) || a.name.localeCompare(b.name);
+  });
+  if(!compEngSel || !res[compEngSel]) compEngSel = (list[0]||{}).name || "";
+  const strong = v=> v<0 ? ' style="color:var(--bad);font-weight:700"' : v>0 ? ' style="font-weight:700"' : '';
+
+  const sumRows = list.map(r=>`<tr${r.name===compEngSel?' style="background:var(--accent)"':''}>
+      <td data-label="Ingeniero"><b>${escH(r.name)}</b></td>
+      <td data-label="Saldo anterior">${fmtN(r.saldoComp)} d</td>
+      <td data-label="Generados">${fmtN(r.compGenDias)} d</td>
+      <td data-label="Tomados">${fmtN(r.compTomDias)} d</td>
+      <td data-label="Comp. pendientes"${strong(r.compPendDias)}>${fmtN(r.compPendDias)} d</td>
+      <td data-label="Dom./festivos por pagar"${strong(r.domPendDias)}>${fmtN(r.domPendDias)} d${r.hPagoPend?` <span class="hint">(${fmtN(r.hPagoPend)} h)</span>`:""}</td>
+      <td data-label="Bono campo pendiente"${strong(r.bonoPendTotal)}>${fmtN(r.bonoPendTotal)} d</td>
+      <td data-label="Bono campo pagado">${r.bonoPag} d</td>
+      <td data-label=""><button class="tiny" data-act="comp-ver" data-eng="${escH(r.name)}">Ver detalle</button></td>
+    </tr>`).join("");
+  const resumen = `
+  <div class="card">
+    <div class="admin-note">Esta sección solo la ves tú. Todo se calcula solo a partir de los registros diarios de los ingenieros (de todos los meses):
+      <br>• <b>Compensatorio generado</b>: horas <b>Extra</b> de sábado, entre semana y movilización a campo. Los domingos y festivos se reconocen por defecto como <b>pago en dinero</b>; puedes cambiar cualquier caso.
+      <br>• <b>Compensatorio tomado</b>: días que el ingeniero registra con tipo de hora <b>Compensatorio</b>.
+      <br>• <b>Bono de campo</b>: cada día distinto que el ingeniero registra la actividad <b>"${ACTIVIDAD_CAMPO}"</b> con horas.
+      <br>Los días se calculan como horas ÷ ${MAX_HORAS} (jornada completa).</div>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Ingeniero</th><th>Saldo ant.</th><th>Generados</th><th>Tomados</th><th>Comp. pend.</th><th>Dom./fest. por pagar</th><th>Bono campo pend.</th><th>Bono pagado</th><th></th></tr></thead>
+      <tbody>${sumRows || `<tr><td colspan="9"><div class="empty">Sin datos todavía.</div></td></tr>`}</tbody>
+    </table></div>
+  </div>`;
+
+  const r = res[compEngSel];
+  if(!r) return resumen;
+  const engOpts = list.map(x=>`<option value="${escH(x.name)}" ${x.name===compEngSel?'selected':''}>${escH(x.name)}</option>`).join("");
+
+  const extraRows = r.extras.map(d=>{
+    const tipoExtra = d.extraTipo || "Trabajo normal";
+    const reconoce = d.tratamiento==="Pago"
+      ? `<span class="badge ${d.pagado?'b-comp':'b-pend'}">${d.pagado ? "Pagado"+(d.mesPago?" · "+monthLabel(d.mesPago):"") : "Pago en dinero · por pagar"}</span>`
+      : `<span class="badge b-ausencia">Compensatorio (tiempo)</span>`;
+    const acc = d.tratamiento==="Pago"
+      ? `<button class="tiny ${d.pagado?'':'ok'}" data-act="comp-pago" data-id="${d._id}">${d.pagado?"Desmarcar pago":"Marcar pagado"}</button> <button class="tiny" data-act="comp-trat" data-id="${d._id}" data-v="Tiempo">Pasar a compensatorio</button>`
+      : `<button class="tiny" data-act="comp-trat" data-id="${d._id}" data-v="Pago">Pasar a pago en dinero</button>`;
+    return `<tr>
+      <td data-label="Fecha">${d.fecha}</td>
+      <td data-label="Día">${diaLabel(d.fecha)}</td>
+      <td data-label="Tipo de extra">${escH(tipoExtra)}</td>
+      <td data-label="Detalle">${escH(d.detalle||d.actividad||"")}${d.proyecto?`<div class="hint">${escH(d.proyecto)}</div>`:""}</td>
+      <td data-label="Horas">${fmtN(d.horas)} h</td>
+      <td data-label="Se reconoce como">${reconoce}${d.ajustado?`<div class="hint">ajustado por ti</div>`:""}</td>
+      <td data-label="">${acc}</td>
+    </tr>`;
+  }).join("");
+
+  const tomadoRows = r.tomados.map(d=>`<tr>
+      <td data-label="Fecha">${d.fecha}</td>
+      <td data-label="Día">${diaLabel(d.fecha)}</td>
+      <td data-label="Horas">${fmtN(d.horas)} h</td>
+      <td data-label="Días">${fmtN((Number(d.horas)||0)/MAX_HORAS)} d</td>
+      <td data-label="Motivo">${escH(d.obs||d.detalle||"—")}</td>
+    </tr>`).join("");
+
+  const confirmingAll = pendingConfirm && pendingConfirm.type==="bonoAll" && pendingConfirm.key===r.name;
+  const campoRows = r.campoDias.map(x=>`<tr>
+      <td data-label="Fecha">${x.fecha}</td>
+      <td data-label="Día">${diaLabel(x.fecha)}</td>
+      <td data-label="Proyecto">${escH(x.proyecto||"—")}</td>
+      <td data-label="Horas">${fmtN(x.horas)} h</td>
+      <td data-label="Estado"><span class="badge ${x.pagado?'b-comp':'b-pend'}">${x.pagado ? "Pagado"+(x.mesPago?" · "+monthLabel(x.mesPago):"") : "Pendiente"}</span></td>
+      <td data-label=""><button class="tiny ${x.pagado?'':'ok'}" data-act="bono-toggle" data-eng="${escH(x.engineer)}" data-fecha="${x.fecha}">${x.pagado?"Desmarcar":"Marcar pagado"}</button></td>
+    </tr>`).join("");
+
+  const ref = excelRef(r.name);
+  const s = r.saldo;
+  const detalle = `
+  <div class="card" id="comp_detalle">
+    <div class="row2">
+      <div><label>Detalle del ingeniero</label><select id="comp_eng_sel">${engOpts}</select></div>
+      <div><label>Mes de pago al marcar "pagado"</label><input type="month" id="comp_mes_pago" value="${compMesPago}"></div>
+    </div>
+    ${r.desde ? `<div class="hint" style="margin-top:6px">Contando registros desde el ${r.desde} (lo anterior está en el saldo anterior).</div>` : ""}
+
+    <h3 style="margin:18px 0 8px">Horas extra (${fmtN(r.hTiempo)} h a compensatorio · ${fmtN(r.hPagoPend)} h por pagar · ${fmtN(r.hPagoPagado)} h pagadas)</h3>
+    <div class="scroll-x">${extraRows ? `<table><thead><tr><th>Fecha</th><th>Día</th><th>Tipo</th><th>Detalle</th><th>Horas</th><th>Se reconoce como</th><th></th></tr></thead><tbody>${extraRows}</tbody></table>` : `<div class="empty">Sin horas extra registradas.</div>`}</div>
+
+    <h3 style="margin:18px 0 8px">Compensatorios tomados (${fmtN(r.compTomDias)} d)</h3>
+    <div class="scroll-x">${tomadoRows ? `<table><thead><tr><th>Fecha</th><th>Día</th><th>Horas</th><th>Días</th><th>Motivo</th></tr></thead><tbody>${tomadoRows}</tbody></table>` : `<div class="empty">No ha tomado compensatorios.</div>`}</div>
+
+    <h3 style="margin:18px 0 8px">Bono de campo (${r.bonoPend} d pendientes · ${r.bonoPag} d pagados)</h3>
+    ${r.bonoPend>0 ? (confirmingAll
+      ? `<div class="confirmrow" style="margin-bottom:8px">¿Marcar los ${r.bonoPend} días pendientes como pagados en ${monthLabel(compMesPago)}? <button class="tiny ok" data-act="confirm-bono-all" data-eng="${escH(r.name)}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></div>`
+      : `<button class="tiny ok" data-act="ask-bono-all" data-eng="${escH(r.name)}" style="margin-bottom:8px">Marcar todos los pendientes como pagados</button>`) : ""}
+    <div class="scroll-x">${campoRows ? `<table><thead><tr><th>Fecha</th><th>Día</th><th>Proyecto</th><th>Horas</th><th>Estado</th><th></th></tr></thead><tbody>${campoRows}</tbody></table>` : `<div class="empty">Sin días en campo registrados (actividad "${ACTIVIDAD_CAMPO}").</div>`}</div>
+
+    <div style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border)">
+      <label>Saldo anterior (lo que traía del Excel antes de usar esta app)</label>
+      <div class="hint" style="margin-bottom:8px">Pon la <b>fecha de corte</b> desde la que el ingeniero ya registra en esta app, para no contar dos veces lo que ya estaba en el Excel.${ref ? ` En tu Excel (${escH(ref.nombre)}): compensatorios pendientes ${fmtN(ref.compDias)} d · bono de campo pendiente ${ref.bonoDias} d · domingos por pagar ${ref.domingosDias} d.` : ""}</div>
+      <div class="row2">
+        <div><label>Compensatorios pendientes (días)</label><input type="number" step="0.01" id="saldo_comp" value="${s.compDias!=null?s.compDias:""}" placeholder="0"></div>
+        <div><label>Bono de campo pendiente (días)</label><input type="number" step="1" id="saldo_bono" value="${s.bonoDias!=null?s.bonoDias:""}" placeholder="0"></div>
+      </div>
+      <div class="row2">
+        <div><label>Domingos/festivos por pagar (días)</label><input type="number" step="0.01" id="saldo_dom" value="${s.domingosDias!=null?s.domingosDias:""}" placeholder="0"></div>
+        <div><label>Contar registros de la app desde</label><input type="date" id="saldo_desde" value="${s.desde||""}"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="primary" data-act="comp-save-saldo" data-eng="${escH(r.name)}" style="margin-top:0;flex:1">Guardar saldo</button>
+        ${ref ? `<button class="secondary" data-act="comp-fill-excel" data-eng="${escH(r.name)}" style="flex:1">Copiar valores del Excel</button>` : ""}
+      </div>
+    </div>
+    <div class="msg ${formMsgType}" id="msgbox4" style="margin-top:10px">${formMsg}</div>
+  </div>`;
+  return resumen + detalle;
+}
+
+async function saveAjuste(activityId, patch){
+  const d = compEntries.find(e=>e._id===activityId);
+  if(!d) return;
+  const data = { ...(compAjustes[activityId]||{}), ...patch, engineer: d.engineer, fecha: d.fecha, updatedAt: new Date().toISOString() };
+  try{ await db.doc("comp_ajustes/"+activityId).set(data); showMsg("Cambio guardado.", "ok"); }
+  catch(err){ showMsg("No se pudo guardar (¿actualizaste las reglas de Firestore?): " + (err.message||err.code), "bad"); render(); }
+}
+
+async function toggleBono(engineer, fecha){
+  const id = campoPagoId(engineer, fecha);
+  const cur = campoPagos[id];
+  try{
+    if(cur && cur.pagado){ await db.doc("campo_pagos/"+id).delete(); showMsg("Día marcado como pendiente.", "ok"); }
+    else { await db.doc("campo_pagos/"+id).set({ engineer, fecha, pagado:true, mesPago: compMesPago, updatedAt: new Date().toISOString() }); showMsg("Día de campo marcado como pagado.", "ok"); }
+  }catch(err){ showMsg("No se pudo guardar (¿actualizaste las reglas de Firestore?): " + (err.message||err.code), "bad"); render(); }
+}
+
+async function marcarBonosPagados(engineer){
+  const r = computeCompBonos()[engineer]; if(!r) return;
+  const pend = r.campoDias.filter(x=>!x.pagado);
+  try{
+    for(const x of pend){
+      await db.doc("campo_pagos/"+campoPagoId(x.engineer, x.fecha)).set({ engineer:x.engineer, fecha:x.fecha, pagado:true, mesPago: compMesPago, updatedAt: new Date().toISOString() });
+    }
+    showMsg(`${pend.length} día(s) de campo marcados como pagados en ${monthLabel(compMesPago)}.`, "ok");
+  }catch(err){ showMsg("No se pudo guardar: " + (err.message||err.code), "bad"); render(); }
+}
+
+async function saveSaldo(engineer){
+  const num = id=>{ const el=document.getElementById(id); const v = el ? el.value.trim() : ""; return v==="" ? 0 : Number(v); };
+  const desdeEl = document.getElementById("saldo_desde");
+  const data = { engineer, compDias: num("saldo_comp"), bonoDias: num("saldo_bono"), domingosDias: num("saldo_dom"),
+    desde: desdeEl ? desdeEl.value : "", updatedAt: new Date().toISOString() };
+  if([data.compDias, data.bonoDias, data.domingosDias].some(isNaN)){ showMsg("Revisa los números del saldo.", "bad"); return; }
+  try{ await db.doc("comp_saldos/"+slugify(engineer)).set(data); showMsg("Saldo anterior guardado.", "ok"); }
+  catch(err){ showMsg("No se pudo guardar (¿actualizaste las reglas de Firestore?): " + (err.message||err.code), "bad"); }
+}
+
+function stopCompData(){
+  compUnsubs.forEach(u=>{ try{ u && u(); }catch(e){} });
+  compUnsubs = [];
+  compEntries = []; campoEntries = []; compAjustes = {}; campoPagos = {}; compSaldos = {};
+  compLoaded = {comp:false, campo:false};
+}
+function subscribeCompData(){
+  stopCompData();
+  if(!db || !isOwner) return;
+  const rr = ()=>{ if(view==="compensatorios") render(); };
+  const toMap = snap=>{ const m = {}; snap.docs.forEach(d=>{ m[d.id] = d.data(); }); return m; };
+  // Consultas de un solo campo (sin orderBy) para no requerir índices compuestos; se ordena en el navegador.
+  compUnsubs.push(db.collection("activities").where("tipoHora","in",["Extra","Compensatorio"]).limit(5000)
+    .onSnapshot(snap=>{ compEntries = snap.docs.map(d=>({ _id:d.id, ...d.data() })); compLoaded.comp = true; rr(); },
+      err=>showGlobalError("Compensatorios", err)));
+  compUnsubs.push(db.collection("activities").where("actividad","==",ACTIVIDAD_CAMPO).limit(5000)
+    .onSnapshot(snap=>{ campoEntries = snap.docs.map(d=>({ _id:d.id, ...d.data() })); compLoaded.campo = true; rr(); },
+      err=>showGlobalError("Bonos de campo", err)));
+  compUnsubs.push(db.collection("comp_ajustes").limit(5000)
+    .onSnapshot(snap=>{ compAjustes = toMap(snap); rr(); }, err=>showGlobalError("Ajustes de compensatorios (revisa las reglas de Firestore)", err)));
+  compUnsubs.push(db.collection("campo_pagos").limit(5000)
+    .onSnapshot(snap=>{ campoPagos = toMap(snap); rr(); }, err=>showGlobalError("Pagos de bono de campo (revisa las reglas de Firestore)", err)));
+  compUnsubs.push(db.collection("comp_saldos").limit(500)
+    .onSnapshot(snap=>{ compSaldos = toMap(snap); rr(); }, err=>showGlobalError("Saldos anteriores (revisa las reglas de Firestore)", err)));
 }
 
 // ---------- Subscripciones ----------
@@ -1610,6 +1947,7 @@ async function submitAdminLogin(){
   }
 }
 async function lockAdmin(){
+  stopCompData(); // antes de salir, para que las colecciones solo-admin no den error de permisos
   try{ await window.__firebaseAuth.logoutAdmin(); }catch(e){ console.error(e); }
   view = "form";
 }
@@ -1639,9 +1977,14 @@ async function init(){
   window.__firebaseAuth.onChange(()=>{
     const wasOwner = isOwner;
     isOwner = window.__firebaseAuth.isAdminNow();
-    if(wasOwner !== isOwner) render();
+    if(wasOwner !== isOwner){
+      if(isOwner) subscribeCompData();
+      else { stopCompData(); if(view==="compensatorios") view = "form"; }
+      render();
+    }
   });
   isOwner = window.__firebaseAuth.isAdminNow();
+  if(isOwner && !compUnsubs.length) subscribeCompData();
   subscribeEngineers();
   subscribeAll();
   subscribeEstimates();
