@@ -26,7 +26,14 @@
     messagingSenderId: "509408674128",
     appId: "1:509408674128:web:f857981906324954112c55"
   };
-  const ADMIN_EMAIL = "ivan.chipiaje@prosolutions-int.com";
+  // Correos con permisos de administrador (deben coincidir con la lista de firestore.rules)
+  const ADMIN_EMAILS = [
+    "ivan.chipiaje@prosolutions-int.com",
+    "soporte_talento@prosolutions-int.com",
+    "contabilidad@prosolutions-int.com",
+    "jpaez@prosolutions-int.com",
+    "dreyes@prosolutions-int.com"
+  ];
   const fbApp = initializeApp(firebaseConfig);
   const firestoreDb = getFirestore(fbApp);
   const fbAuth = getAuth(fbApp);
@@ -44,7 +51,7 @@
     },
     isAdminNow(){
       const u = fbAuth.currentUser;
-      return !!(u && !u.isAnonymous && u.email === ADMIN_EMAIL);
+      return !!(u && !u.isAnonymous && u.email && ADMIN_EMAILS.includes(u.email.toLowerCase()));
     },
     onChange(cb){ onAuthStateChanged(fbAuth, cb); }
   };
