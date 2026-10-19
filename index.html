@@ -915,6 +915,8 @@ async function handleAction(act, ds){
   if(act === "ask-bono-all"){ pendingConfirm = {type:"bonoAll", key: ds.eng}; render(); return; }
   if(act === "confirm-bono-all"){ pendingConfirm = null; await marcarBonosPagados(ds.eng); return; }
   if(act === "comp-save-saldo"){ await saveSaldo(ds.eng); return; }
+  if(act === "ask-pay-saldo"){ pendingConfirm = {type:"saldoPago", key: ds.eng+"|"+ds.kind}; render(); return; }
+  if(act === "confirm-pay-saldo"){ pendingConfirm = null; await paySaldoAnterior(ds.eng, ds.kind); return; }
   if(act === "comp-fill-excel"){
     const ref = excelRef(ds.eng); if(!ref) return;
     const set = (id,v)=>{ const el=document.getElementById(id); if(el) el.value = v; };
@@ -1189,9 +1191,19 @@ function tratamientoDefault(d){
   if(d.extraTipo === "Movilización a campo") return "Tiempo";
   return esDominical(d.fecha) ? "Pago" : "Tiempo";
 }
+function esMovilizacion(d){ return d.extraTipo === "Movilización a campo"; }
 function tratamientoDe(d){
+  if(esMovilizacion(d)) return "Tiempo"; // la movilización nunca se paga, siempre se compensa (aunque sea domingo)
   const a = compAjustes[d._id];
   return (a && a.tratamiento) || tratamientoDefault(d);
+}
+// Punto de arranque: hasta esta fecha manda el Excel (saldo anterior); desde aquí, los registros de la app.
+const SALDO_CORTE_EXCEL = "2026-10-19";
+function saldoDe(name){
+  const saved = compSaldos[slugify(name)];
+  if(saved) return saved;
+  const ref = excelRef(name);
+  return ref ? { compDias:ref.compDias, bonoDias:ref.bonoDias, domingosDias:ref.domingosDias, desde:SALDO_CORTE_EXCEL, _auto:true } : {};
 }
 
 function computeCompBonos(){
@@ -1200,7 +1212,7 @@ function computeCompBonos(){
   campoEntries.forEach(d=>{ if(d.engineer) names.add(d.engineer); });
   const res = {};
   names.forEach(n=>{
-    const s = compSaldos[slugify(n)] || {};
+    const s = saldoDe(n);
     res[n] = { name:n, saldo:s, desde:s.desde||"", extras:[], tomados:[], campoDias:[],
       hTiempo:0, hPagoPend:0, hPagoPagado:0, hTomadas:0, bonoPend:0, bonoPag:0 };
   });
@@ -1245,6 +1257,7 @@ function computeCompBonos(){
     r.compPendDias = r.saldoComp + r.compGenDias - r.compTomDias;
     r.domPendDias = (Number(r.saldo.domingosDias)||0) + r.hPagoPend / MAX_HORAS;
     r.bonoPendTotal = (Number(r.saldo.bonoDias)||0) + r.bonoPend;
+    r.bonoPagTotal = r.bonoPag + (Number(r.saldo.bonoSaldoPagado)||0);
   });
   return res;
 }
@@ -1270,13 +1283,14 @@ function renderCompensatorios(){
       <td data-label="Comp. pendientes"${strong(r.compPendDias)}>${fmtN(r.compPendDias)} d</td>
       <td data-label="Dom./festivos por pagar"${strong(r.domPendDias)}>${fmtN(r.domPendDias)} d${r.hPagoPend?` <span class="hint">(${fmtN(r.hPagoPend)} h)</span>`:""}</td>
       <td data-label="Bono campo pendiente"${strong(r.bonoPendTotal)}>${fmtN(r.bonoPendTotal)} d</td>
-      <td data-label="Bono campo pagado">${r.bonoPag} d</td>
+      <td data-label="Bono campo pagado">${fmtN(r.bonoPagTotal)} d</td>
       <td data-label=""><button class="tiny" data-act="comp-ver" data-eng="${escH(r.name)}">Ver detalle</button></td>
     </tr>`).join("");
   const resumen = `
   <div class="card">
     <div class="admin-note">Esta sección solo la ves tú. Todo se calcula solo a partir de los registros diarios de los ingenieros (de todos los meses):
-      <br>• <b>Compensatorio generado</b>: horas <b>Extra</b> de sábado, entre semana y movilización a campo. Los domingos y festivos se reconocen por defecto como <b>pago en dinero</b>; puedes cambiar cualquier caso.
+      <br>• <b>Compensatorio generado</b>: horas <b>Extra</b> de sábado, entre semana y movilización a campo. Los domingos y festivos se reconocen por defecto como <b>pago en dinero</b> (puedes cambiarlo). La <b>movilización siempre se compensa</b>, aunque sea domingo o festivo.
+      <br>• <b>Punto de partida</b>: lo anterior al ${SALDO_CORTE_EXCEL} viene del Excel como saldo anterior; desde esa fecha suma lo que registran en la app.
       <br>• <b>Compensatorio tomado</b>: días que el ingeniero registra con tipo de hora <b>Compensatorio</b>.
       <br>• <b>Bono de campo</b>: cada día distinto que el ingeniero registra la actividad <b>"${ACTIVIDAD_CAMPO}"</b> con horas.
       <br>Los días se calculan como horas ÷ ${MAX_HORAS} (jornada completa).</div>
@@ -1297,7 +1311,9 @@ function renderCompensatorios(){
       : `<span class="badge b-ausencia">Compensatorio (tiempo)</span>`;
     const acc = d.tratamiento==="Pago"
       ? `<button class="tiny ${d.pagado?'':'ok'}" data-act="comp-pago" data-id="${d._id}">${d.pagado?"Desmarcar pago":"Marcar pagado"}</button> <button class="tiny" data-act="comp-trat" data-id="${d._id}" data-v="Tiempo">Pasar a compensatorio</button>`
-      : `<button class="tiny" data-act="comp-trat" data-id="${d._id}" data-v="Pago">Pasar a pago en dinero</button>`;
+      : esMovilizacion(d)
+        ? `<span class="hint">Movilización: siempre se compensa</span>`
+        : `<button class="tiny" data-act="comp-trat" data-id="${d._id}" data-v="Pago">Pasar a pago en dinero</button>`;
     return `<tr>
       <td data-label="Fecha">${d.fecha}</td>
       <td data-label="Día">${diaLabel(d.fecha)}</td>
@@ -1340,10 +1356,13 @@ function renderCompensatorios(){
     <h3 style="margin:18px 0 8px">Horas extra (${fmtN(r.hTiempo)} h a compensatorio · ${fmtN(r.hPagoPend)} h por pagar · ${fmtN(r.hPagoPagado)} h pagadas)</h3>
     <div class="scroll-x">${extraRows ? `<table><thead><tr><th>Fecha</th><th>Día</th><th>Tipo</th><th>Detalle</th><th>Horas</th><th>Se reconoce como</th><th></th></tr></thead><tbody>${extraRows}</tbody></table>` : `<div class="empty">Sin horas extra registradas.</div>`}</div>
 
+    ${saldoPagoRow(r, "dom", "Domingos/festivos por pagar que vienen del Excel")}
+
     <h3 style="margin:18px 0 8px">Compensatorios tomados (${fmtN(r.compTomDias)} d)</h3>
     <div class="scroll-x">${tomadoRows ? `<table><thead><tr><th>Fecha</th><th>Día</th><th>Horas</th><th>Días</th><th>Motivo</th></tr></thead><tbody>${tomadoRows}</tbody></table>` : `<div class="empty">No ha tomado compensatorios.</div>`}</div>
 
-    <h3 style="margin:18px 0 8px">Bono de campo (${r.bonoPend} d pendientes · ${r.bonoPag} d pagados)</h3>
+    <h3 style="margin:18px 0 8px">Bono de campo (${fmtN(r.bonoPendTotal)} d pendientes · ${fmtN(r.bonoPagTotal)} d pagados)</h3>
+    ${saldoPagoRow(r, "bono", "Saldo anterior del Excel (días de campo sin fecha en la app)")}
     ${r.bonoPend>0 ? (confirmingAll
       ? `<div class="confirmrow" style="margin-bottom:8px">¿Marcar los ${r.bonoPend} días pendientes como pagados en ${monthLabel(compMesPago)}? <button class="tiny ok" data-act="confirm-bono-all" data-eng="${escH(r.name)}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></div>`
       : `<button class="tiny ok" data-act="ask-bono-all" data-eng="${escH(r.name)}" style="margin-bottom:8px">Marcar todos los pendientes como pagados</button>`) : ""}
@@ -1351,7 +1370,9 @@ function renderCompensatorios(){
 
     <div style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border)">
       <label>Saldo anterior (lo que traía del Excel antes de usar esta app)</label>
-      <div class="hint" style="margin-bottom:8px">Pon la <b>fecha de corte</b> desde la que el ingeniero ya registra en esta app, para no contar dos veces lo que ya estaba en el Excel.${ref ? ` En tu Excel (${escH(ref.nombre)}): compensatorios pendientes ${fmtN(ref.compDias)} d · bono de campo pendiente ${ref.bonoDias} d · domingos por pagar ${ref.domingosDias} d.` : ""}</div>
+      ${s._auto
+        ? `<div class="hint" style="margin-bottom:8px;color:var(--ok)">✓ Cargado automáticamente desde tu Excel (${escH(ref.nombre)}), con corte el ${SALDO_CORTE_EXCEL}. Ya está aplicado en los totales; solo presiona Guardar si quieres cambiar algún valor.</div>`
+        : `<div class="hint" style="margin-bottom:8px">La <b>fecha de corte</b> es desde cuándo se cuentan los registros de la app, para no contar dos veces lo que ya estaba en el Excel.${ref ? ` En tu Excel (${escH(ref.nombre)}): compensatorios pendientes ${fmtN(ref.compDias)} d · bono de campo pendiente ${ref.bonoDias} d · domingos por pagar ${ref.domingosDias} d.` : ""}</div>`}
       <div class="row2">
         <div><label>Compensatorios pendientes (días)</label><input type="number" step="0.01" id="saldo_comp" value="${s.compDias!=null?s.compDias:""}" placeholder="0"></div>
         <div><label>Bono de campo pendiente (días)</label><input type="number" step="1" id="saldo_bono" value="${s.bonoDias!=null?s.bonoDias:""}" placeholder="0"></div>
@@ -1368,6 +1389,37 @@ function renderCompensatorios(){
     <div class="msg ${formMsgType}" id="msgbox4" style="margin-top:10px">${formMsg}</div>
   </div>`;
   return resumen + detalle;
+}
+
+// Fila para pagar de una vez el saldo que viene del Excel (días que no tienen fecha en la app)
+function saldoPagoRow(r, kind, titulo){
+  const campo = kind==="bono" ? "bonoDias" : "domingosDias";
+  const pend = Number(r.saldo[campo])||0;
+  const pagado = Number(r.saldo[kind+"SaldoPagado"])||0;
+  const mes = r.saldo[kind+"SaldoMesPago"];
+  if(!pend && !pagado) return "";
+  const confirming = pendingConfirm && pendingConfirm.type==="saldoPago" && pendingConfirm.key===r.name+"|"+kind;
+  const accion = !pend ? "" : confirming
+    ? `<span class="confirmrow">¿Marcar ${fmtN(pend)} d como pagados en ${monthLabel(compMesPago)}? <button class="tiny ok" data-act="confirm-pay-saldo" data-eng="${escH(r.name)}" data-kind="${kind}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
+    : `<button class="tiny ok" data-act="ask-pay-saldo" data-eng="${escH(r.name)}" data-kind="${kind}">Marcar saldo como pagado</button>`;
+  return `<div class="engrow" style="background:var(--fill);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px;border:none">
+    <span style="flex:1 1 220px"><b>${titulo}:</b> ${pend ? `<span class="badge b-pend">${fmtN(pend)} d pendientes</span>` : ""} ${pagado ? `<span class="badge b-comp">${fmtN(pagado)} d pagados${mes?" · "+monthLabel(mes):""}</span>` : ""}</span>
+    ${accion}
+  </div>`;
+}
+
+async function paySaldoAnterior(engineer, kind){
+  const s = saldoDe(engineer);
+  const campo = kind==="bono" ? "bonoDias" : "domingosDias";
+  const pend = Number(s[campo])||0;
+  if(!pend) return;
+  const data = { ...s, engineer, updatedAt: new Date().toISOString() };
+  delete data._auto;
+  data[campo] = 0;
+  data[kind+"SaldoPagado"] = (Number(s[kind+"SaldoPagado"])||0) + pend;
+  data[kind+"SaldoMesPago"] = compMesPago;
+  try{ await db.doc("comp_saldos/"+slugify(engineer)).set(data); showMsg(`Saldo anterior marcado como pagado (${fmtN(pend)} d).`, "ok"); }
+  catch(err){ showMsg("No se pudo guardar (¿actualizaste las reglas de Firestore?): " + (err.message||err.code), "bad"); render(); }
 }
 
 async function saveAjuste(activityId, patch){
@@ -1401,7 +1453,7 @@ async function marcarBonosPagados(engineer){
 async function saveSaldo(engineer){
   const num = id=>{ const el=document.getElementById(id); const v = el ? el.value.trim() : ""; return v==="" ? 0 : Number(v); };
   const desdeEl = document.getElementById("saldo_desde");
-  const data = { engineer, compDias: num("saldo_comp"), bonoDias: num("saldo_bono"), domingosDias: num("saldo_dom"),
+  const data = { ...(compSaldos[slugify(engineer)]||{}), engineer, compDias: num("saldo_comp"), bonoDias: num("saldo_bono"), domingosDias: num("saldo_dom"),
     desde: desdeEl ? desdeEl.value : "", updatedAt: new Date().toISOString() };
   if([data.compDias, data.bonoDias, data.domingosDias].some(isNaN)){ showMsg("Revisa los números del saldo.", "bad"); return; }
   try{ await db.doc("comp_saldos/"+slugify(engineer)).set(data); showMsg("Saldo anterior guardado.", "ok"); }
