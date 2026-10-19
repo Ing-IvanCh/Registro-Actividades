@@ -502,10 +502,9 @@ function renderMyTable(){
       : `<button class="tiny" data-act="edit-activity" data-id="${d._id}">Editar</button> <button class="del" data-act="ask-del-activity" data-id="${d._id}">Eliminar</button>`;
     const isEditing = editingId === d._id;
     const tipo = d.tipoHora || "Normal";
-    const tipoLabel = (tipo==="Extra" && d.extraTipo) ? `Extra · ${d.extraTipo}` : tipo;
     return `<tr${isEditing ? ' style="background:var(--accent)"' : ''}>
       <td data-label="Fecha">${d.fecha||""}</td>
-      <td data-label="Tipo">${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipoLabel}</span>`}</td>
+      <td data-label="Tipo">${tipo==="Normal" ? "—" : `<span class="badge ${tipo==="Extra"?"b-extra":"b-ausencia"}">${tipo}</span>`}</td>
       <td data-label="Actividad">${d.actividad||""}</td>
       <td data-label="Detalle">${d.detalle||""}</td>
       <td data-label="Proyecto">${d.proyecto||""}</td>
@@ -1221,6 +1220,17 @@ function buildReportData(){
   const domingos = trabajoFinDeSemana.filter(d=>weekdayOf(d.fecha)===0);
   const ingenierosSabado = [...new Set(sabados.map(d=>d.engineer))];
   const ingenierosDomingo = [...new Set(domingos.map(d=>d.engineer))];
+  // Horas extra por ingeniero, separadas por sábado / domingo / movilización a campo —
+  // esto es lo que define si se pagan en dinero (domingo) o se compensan en tiempo
+  // (sábado y movilización), así que es la vista que de verdad le sirve a RR.HH.
+  const extraPorIngeniero = engineersList.map(eng=>{
+    const entries = allEntries.filter(d=> d.engineer===eng.name && (d.tipoHora||"Normal")==="Extra");
+    const horasSabado = entries.filter(d=>weekdayOf(d.fecha)===6).reduce((s,d)=>s+(d.horas||0),0);
+    const horasDomingo = entries.filter(d=>weekdayOf(d.fecha)===0).reduce((s,d)=>s+(d.horas||0),0);
+    const horasMovilizacion = entries.filter(d=>(d.extraTipo||"Trabajo normal")==="Movilización a campo").reduce((s,d)=>s+(d.horas||0),0);
+    const horasTotal = entries.reduce((s,d)=>s+(d.horas||0),0);
+    return { name: eng.name, horasTotal, horasSabado, horasDomingo, horasMovilizacion };
+  }).filter(e=>e.horasTotal>0);
   // Clasificación por convención de código: 3XXX Proyecto, 2XXX Servicio, 0XXX Capacitación
   const byCategoria = {};
   const codigosPorCategoria = {};
@@ -1250,7 +1260,7 @@ function buildReportData(){
   const horasApoyo = Math.max(0, totalHoras - horasEnProyectos);
   const statusCounts = { "Buen ritmo":0, "En progreso":0, "Rezagado":0, "Sin registros":0, "Sin datos":0 };
   porEng.forEach(e=>{ statusCounts[e.estado] = (statusCounts[e.estado]||0)+1; });
-  return { start, end, porEng, byAct, byProy, byTipoHora, byExtraSubtipo, byCategoria, codigosPorCategoria, novedades, bloqueos, notasAdicionales, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
+  return { start, end, porEng, byAct, byProy, byTipoHora, byExtraSubtipo, extraPorIngeniero, byCategoria, codigosPorCategoria, novedades, bloqueos, notasAdicionales, proyectosActivos, horasEnProyectos, horasApoyo, statusCounts, tareas,
     sabados, domingos, ingenierosSabado, ingenierosDomingo,
     totalHoras, totalRegistros: porEng.reduce((s,e)=>s+e.n,0),
     sinRegistros: porEng.filter(e=>e.n===0).map(e=>e.name) };
@@ -1273,9 +1283,13 @@ async function downloadCsvReport(){
   lines.push("Tipo,Horas,Registros");
   Object.keys(r.byTipoHora).sort((a,b)=>r.byTipoHora[b].h-r.byTipoHora[a].h).forEach(k=>lines.push([k,r.byTipoHora[k].h.toFixed(1),r.byTipoHora[k].n].map(csvEsc).join(",")));
   lines.push("");
-  lines.push("HORAS EXTRA: TRABAJO NORMAL VS MOVILIZACION A CAMPO");
+  lines.push("HORAS EXTRA: TRABAJO NORMAL VS MOVILIZACION A CAMPO (total del area)");
   lines.push("Tipo de hora extra,Horas,Registros");
   Object.keys(r.byExtraSubtipo).sort((a,b)=>r.byExtraSubtipo[b].h-r.byExtraSubtipo[a].h).forEach(k=>lines.push([k,r.byExtraSubtipo[k].h.toFixed(1),r.byExtraSubtipo[k].n].map(csvEsc).join(",")));
+  lines.push("");
+  lines.push("HORAS EXTRA POR COLABORADOR (sabado=compensatorio, domingo=dinero, movilizacion=compensatorio)");
+  lines.push("Colaborador,Total extra,Sabado,Domingo,Movilizacion a campo");
+  r.extraPorIngeniero.forEach(e=>lines.push([e.name,e.horasTotal.toFixed(1),e.horasSabado.toFixed(1),e.horasDomingo.toFixed(1),e.horasMovilizacion.toFixed(1)].map(csvEsc).join(",")));
   lines.push("");
   lines.push("HORAS POR TIPO DE ACTIVIDAD");
   lines.push("Actividad,Horas,Registros");
@@ -1487,9 +1501,15 @@ async function downloadWordReport(){
   const tipoRows = Object.keys(r.byTipoHora).sort((a,b)=>r.byTipoHora[b].h-r.byTipoHora[a].h).map(k=>[k, r.byTipoHora[k].h.toFixed(1)+" h", String(r.byTipoHora[k].n)]);
   body += tipoRows.length ? wTable(["Tipo de hora","Horas","Registros"],[2400,1300,1300],tipoRows) : wp("Sin datos en el periodo.",{italics:true,color:"6B7280"});
   if(Object.keys(r.byExtraSubtipo).length){
-    body += wp("Detalle de horas extra: trabajo normal vs. movilización a campo", {bold:true, size:19, after:80});
+    body += wp("Horas extra: trabajo normal vs. movilización a campo (total del área)", {bold:true, size:19, after:80});
     const extraRows = Object.keys(r.byExtraSubtipo).sort((a,b)=>r.byExtraSubtipo[b].h-r.byExtraSubtipo[a].h).map(k=>[k, r.byExtraSubtipo[k].h.toFixed(1)+" h", String(r.byExtraSubtipo[k].n)]);
     body += wTable(["Tipo de hora extra","Horas","Registros"],[2400,1300,1300],extraRows);
+  }
+  if(r.extraPorIngeniero.length){
+    body += wp("Horas extra por colaborador: sábado, domingo y movilización", {bold:true, size:19, after:40});
+    body += wp("Las de domingo normalmente se pagan en dinero; las de sábado y movilización a campo suelen compensarse en tiempo.", {italics:true, color:"6B7280", size:18, after:80});
+    body += wTable(["Colaborador","Total extra","Sábado","Domingo","Movilización a campo"],[1800,1200,1200,1200,1800],
+      r.extraPorIngeniero.map(e=>[e.name, e.horasTotal.toFixed(1)+" h", e.horasSabado.toFixed(1)+" h", e.horasDomingo.toFixed(1)+" h", e.horasMovilizacion.toFixed(1)+" h"]));
   }
 
   body += wHeading("6. Horas por tipo de actividad");
