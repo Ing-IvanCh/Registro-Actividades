@@ -297,6 +297,20 @@ tr:last-child td{border-bottom:none}
 .cbfold{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
 .cbfold summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--primary)}
 .cbfold-body{margin-top:10px}
+.b-gris{background:var(--fill);color:var(--sub)}
+.ptools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0 6px}
+.ptools input{flex:3 1 220px}
+.ptools select{flex:1 1 150px;width:auto}
+tr.prow{cursor:pointer}
+tr.prow:hover td{background:var(--accent)}
+tr.prow.psel td{background:var(--accent)}
+.palert{font-size:13px;border-radius:var(--radius-sm);padding:10px 12px;margin:8px 0;line-height:1.5}
+.palert.bad{background:var(--badbg)}
+.palert.warn{background:var(--warnbg)}
+.palert.info{background:var(--accent)}
+.palert a{color:var(--primary);cursor:pointer;font-weight:600;text-decoration:underline}
+.ordenform{background:var(--fill);border-radius:var(--radius-md);padding:12px;margin-top:10px}
+.orden_estado{padding:6px 8px;font-size:13px}
 @media(max-width:560px){.tabs{border-radius:var(--radius-lg)}}
 
 /* ---- Tabla responsiva: en pantallas angostas se convierte en tarjetas apiladas, sin deslizar ---- */
@@ -432,6 +446,12 @@ let compUnsubs = [];
 let compSel = "";       // ingeniero abierto en la pestaña Compensatorios
 let bonoSel = "";       // ingeniero abierto en la pestaña Bonos de campo
 let openFolds = new Set(); // secciones plegables abiertas
+// Proyectos
+let projSel = "";              // id del proyecto abierto, o "__new__"
+let projFiltroEstado = "activos", projFiltroTipo = "todos", projBusca = "";
+let projHoras = {};            // id -> {loading} | {rows,total,extra,n} | {error}
+let editingOrden = null;       // {proj, id} de la orden en edición
+let importingProj = false;     // progreso de la carga de la base ("45/145") o false
 
 const app = document.getElementById("app");
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -516,7 +536,7 @@ function renderForm(){
   const actOpts = ACTIVIDADES.map(a=>`<option value="${a}">${a}</option>`).join("");
   const estOpts = ESTADOS.map(e=>`<option value="${e}">${e}</option>`).join("");
   const proyOpts = [`<option value="${SIN_PROYECTO}">`, `<option value="${POR_DEFINIR}">`]
-    .concat(projectsList.map(p=>`<option value="${projectOptionLabel(p)}">`)).join("");
+    .concat(projectsList.filter(proyActivo).map(p=>`<option value="${escH(projectOptionLabel(p))}">`)).join("");
   return `
   <div class="card">
     <label>Ingeniero</label>
@@ -743,33 +763,6 @@ function renderEquipo(){
   </div>`;
 }
 
-function renderProyectos(){
-  const rows = projectsList.map((p,i)=>{
-    const confirmingDel = pendingConfirm && pendingConfirm.type==="deleteProject" && pendingConfirm.key===i;
-    return `<div class="engrow">
-      <input data-i="${i}" class="pr_codigo" value="${p.codigo}" placeholder="Código" style="flex:1">
-      <input data-i="${i}" class="pr_nombre" value="${p.nombre||''}" placeholder="Nombre del proyecto" style="flex:2">
-      <button class="tiny" data-act="save-project" data-i="${i}">Guardar</button>
-      ${confirmingDel
-        ? `<span class="confirmrow">¿Eliminar? <button class="tiny bad" data-act="confirm-del-project" data-i="${i}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
-        : `<button class="tiny bad" data-act="ask-del-project" data-i="${i}">Eliminar</button>`}
-    </div>`;
-  }).join("");
-  return `
-  <div class="card">
-    <div class="admin-note">Cada proyecto es un registro independiente (no se pisan entre sí). Aparecen como sugerencia en "Proyecto / Centro de costo" al registrar actividades; los ingenieros también pueden escribir uno nuevo libremente.<br><b>Convención de códigos</b> (para que el informe clasifique bien): <b>3XXX</b> = Proyectos · <b>2XXX</b> = Servicios · <b>0XXX</b> = Capacitaciones. Un código que no empiece así se reporta como "Otro".</div>
-    ${rows || '<div class="empty">Sin proyectos configurados todavía.</div>'}
-    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <label>Agregar nuevo proyecto</label>
-      <div class="row2">
-        <input id="new_pr_codigo" placeholder="Código (ej. 3051)">
-        <input id="new_pr_nombre" placeholder="Nombre del proyecto">
-      </div>
-      <button class="primary" id="btn_add_pr">Agregar</button>
-    </div>
-    <div class="msg ${formMsgType}" id="msgbox3" style="margin-top:10px">${formMsg}</div>
-  </div>`;
-}
 
 function showMsg(text, type){
   formMsg = text; formMsgType = type;
@@ -886,8 +879,28 @@ function wireEvents(){
   if(btnAddEng) btnAddEng.onclick = addEngineer;
   const btnImportSeed = document.getElementById("btn_import_seed");
   if(btnImportSeed) btnImportSeed.onclick = importSeedData;
-  const btnAddPr = document.getElementById("btn_add_pr");
-  if(btnAddPr) btnAddPr.onclick = addProject;
+  const btnProjImport = document.getElementById("btn_proj_import");
+  if(btnProjImport) btnProjImport.onclick = importProyectosHist;
+  const projBuscaEl = document.getElementById("proj_busca");
+  if(projBuscaEl) projBuscaEl.oninput = (e)=>{
+    // Filtra en pantalla sin redibujar, para no perder el cursor mientras se escribe
+    projBusca = e.target.value;
+    const q = projBusca.trim().toLowerCase();
+    let n = 0;
+    document.querySelectorAll("tr.prow").forEach(tr=>{ const ok = !q || tr.dataset.search.includes(q); tr.style.display = ok ? "" : "none"; if(ok) n++; });
+    const c = document.getElementById("proj_count"); if(c) c.textContent = `${n} proyecto(s)`;
+  };
+  const projFEst = document.getElementById("proj_f_estado");
+  if(projFEst) projFEst.onchange = (e)=>{ projFiltroEstado = e.target.value; render(); };
+  const projFTipo = document.getElementById("proj_f_tipo");
+  if(projFTipo) projFTipo.onchange = (e)=>{ projFiltroTipo = e.target.value; render(); };
+  const pfTipo = document.getElementById("pf_tipo");
+  const pfCodigo = document.getElementById("pf_codigo");
+  if(pfCodigo) pfCodigo.oninput = ()=>{ pfCodigo.dataset.auto = "0"; };
+  if(pfTipo && pfCodigo && projSel==="__new__") pfTipo.onchange = ()=>{ if(pfCodigo.dataset.auto==="1") pfCodigo.value = nextCodigo(pfTipo.value); };
+  document.querySelectorAll(".orden_estado").forEach(sel=>{
+    sel.onchange = ()=> updateOrdenEstado(sel.dataset.proj, sel.dataset.orden, sel.value);
+  });
 
   const btnCbWord = document.getElementById("btn_cb_word");
   if(btnCbWord) btnCbWord.onclick = downloadCompBonosReport;
@@ -946,9 +959,23 @@ async function handleAction(act, ds){
   if(act === "confirm-del-engineer"){ await doDeleteEngineer(Number(ds.i)); return; }
   if(act === "confirm-rename"){ await doRenameEngineer(Number(ds.i)); return; }
 
-  if(act === "save-project"){ await trySaveProject(Number(ds.i)); return; }
-  if(act === "ask-del-project"){ pendingConfirm = {type:"deleteProject", key: Number(ds.i)}; render(); return; }
-  if(act === "confirm-del-project"){ await doDeleteProject(Number(ds.i)); return; }
+  if(act === "proj-open"){
+    if(projSel !== ds.id){ projSel = ds.id; editingOrden = null; pendingConfirm = null; formMsg = ""; const p = projectsList.find(x=>x.id===ds.id); if(p) loadProjHoras(p); }
+    render();
+    const el = document.getElementById("proj_detalle"); if(el) el.scrollIntoView({behavior:"smooth", block:"start"});
+    return;
+  }
+  if(act === "proj-new"){ projSel = "__new__"; editingOrden = null; pendingConfirm = null; formMsg = ""; render(); const el = document.getElementById("proj_detalle"); if(el) el.scrollIntoView({behavior:"smooth", block:"start"}); return; }
+  if(act === "proj-close"){ projSel = ""; editingOrden = null; pendingConfirm = null; render(); return; }
+  if(act === "proj-save"){ await saveProject(); return; }
+  if(act === "ask-del-proj"){ pendingConfirm = {type:"deleteProj", key: ds.id}; render(); return; }
+  if(act === "confirm-del-proj"){ await deleteProject(ds.id); return; }
+  if(act === "proj-horas"){ const p = projectsList.find(x=>x.id===ds.id); if(p){ projHoras[p.id] = {loading:true}; render(); await loadProjHoras(p); } return; }
+  if(act === "orden-save"){ await saveOrden(ds.proj); return; }
+  if(act === "orden-edit"){ editingOrden = { proj: ds.proj, id: ds.orden }; pendingConfirm = null; render(); const el = document.getElementById("of_numero"); if(el) el.focus(); return; }
+  if(act === "orden-cancel"){ editingOrden = null; render(); return; }
+  if(act === "ask-del-orden"){ pendingConfirm = {type:"deleteOrden", key: ds.orden}; render(); return; }
+  if(act === "confirm-del-orden"){ await deleteOrden(ds.proj, ds.orden); return; }
 }
 
 async function onSubmit(ev){
@@ -1150,47 +1177,379 @@ async function addEngineer(){
   }
 }
 
-// ---------- Proyectos: cada proyecto es un documento independiente en config_projects/<codigo> ----------
-async function trySaveProject(i){
-  const p = projectsList[i];
-  const codInput = document.querySelector(`.pr_codigo[data-i="${i}"]`);
-  const nomInput = document.querySelector(`.pr_nombre[data-i="${i}"]`);
-  const codigo = codInput.value.trim();
-  const nombre = nomInput.value.trim();
-  if(!codigo){ showMsg("El código no puede quedar vacío.", "bad"); return; }
-  const newId = sanitizeId(codigo);
-  try{
-    await db.doc("config_projects/"+newId).set({ codigo, nombre });
-    if(newId !== p.id){ await db.doc("config_projects/"+p.id).delete(); }
-    showMsg("Proyecto actualizado.", "ok");
-  }catch(err){
-    showMsg("No se pudo guardar: " + (err.message||err.code), "bad");
-  }
+// ---------- Proyectos y servicios: un documento por proyecto en config_projects/<codigo> ----------
+// Campos: codigo, tipo, cliente, anio, nombre (corto, el que ven los ingenieros), objeto, docTipo, documento (OC/OS/contrato),
+//         estado, fechaInicio, fechaFin, notas, ordenes[] (órdenes de contratos a solicitud del cliente), duplicado, importado.
+const TIPOS_PROY = ["Proyecto","Servicio","Interno"];
+const TIPO_PROY_DESC = { Proyecto:"3xxx", Servicio:"20xx", Interno:"0xxx · capacitaciones y demos" };
+const ESTADOS_PROY = ["Por ejecutar","En ejecución","Pendiente","Bloqueado","Contrato vigente","Ejecutado pendiente de pago","Cerrado"];
+const ESTADOS_PROY_DESC = {
+  "Por ejecutar":"Aprobado, aún no inicia",
+  "En ejecución":"Se está ejecutando",
+  "Pendiente":"En espera de cliente, información o aprobación",
+  "Bloqueado":"Detenido por un impedimento",
+  "Contrato vigente":"Contrato abierto: se ejecuta con órdenes a solicitud del cliente",
+  "Ejecutado pendiente de pago":"Terminado, falta el pago",
+  "Cerrado":"Terminado y pagado"
+};
+// Solo estos estados aparecen en la lista de proyectos de los ingenieros
+const ESTADOS_PROY_ACTIVOS = ["Por ejecutar","En ejecución","Pendiente","Bloqueado","Contrato vigente"];
+const ESTADO_PROY_BADGE = {"Por ejecutar":"b-pend","En ejecución":"b-curso","Pendiente":"b-pend","Bloqueado":"b-bloq","Contrato vigente":"b-comp","Ejecutado pendiente de pago":"b-extra","Cerrado":"b-gris"};
+const DOC_TIPOS = ["OC","OS","Contrato","Otro"];
+const ESTADOS_ORDEN = ["Solicitada","Programada","En ejecución","Ejecutada pendiente de pago","Cerrada","Cancelada"];
+const ORDEN_ABIERTA = ["Solicitada","Programada","En ejecución"];
+const ESTADO_ORDEN_BADGE = {"Solicitada":"b-pend","Programada":"b-curso","En ejecución":"b-curso","Ejecutada pendiente de pago":"b-extra","Cerrada":"b-gris","Cancelada":"b-gris"};
+const DIAS_AVISO_VENCIMIENTO = 60;
+const PROYECTOS_HIST = [{"id":"2000-43","codigo":"2000-43","tipo":"Servicio","cliente":"ACONAIRE","anio":2022,"nombre":"Aconaire - 5 Días de servicio para asesoría virtual en la…","objeto":"5 Días de servicio para asesoría virtual en la instalación y prealistamiento y alistamiento de 4 Medidores de flujo de aire. Cada uno compuesto de: Medidor multivariable, transmisor de presion, sensor de temperatura y su respectivo termopozo. Presencial es el servicio de configuración y puesta en marcha. Enel es el cliente final.","documento":"OC 1-341","estado":"Cerrado"},{"id":"3009","codigo":"3009","tipo":"Proyecto","cliente":"ALPO","anio":2019,"nombre":"Alpo - Levantamiento en campo, migración de un PC a un…","objeto":"Levantamiento en campo, migración de un PC a un SERVIDOR (Experion HS), configuración de señales adicionales, Segundo: Nuevo Torres de destilación al ControlEdge PLC, diseño del gabinete","documento":"4160","estado":"Cerrado"},{"id":"2000-06","codigo":"2000-06","tipo":"Servicio","cliente":"BOMBAS Y MOTAJES","anio":2019,"nombre":"Bombas Y Motajes - Establecer el soporte técnico para el comisionamiento…","objeto":"Establecer el soporte técnico para el comisionamiento y arranque de la bomba de discos Discflo ubicada en la bahía 10 del descargadero de la Estación Cusiana, Ocensa","documento":"OC 1679-19","estado":"Cerrado"},{"id":"3007","codigo":"3007","tipo":"Proyecto","cliente":"CALIDDA","anio":2019,"nombre":"Calidda - Adquisición de sistema de modelamiento hidráulico…","objeto":"Adquisición de sistema de modelamiento hidráulico (simulador) de gasoductos","documento":"OC 4800057335","estado":"Cerrado"},{"id":"3010","codigo":"3010","tipo":"Proyecto","cliente":"CALIDDA","anio":2019,"nombre":"Calidda - Servicio de implementación de un Sistema de Gestión de…","objeto":"Servicio de implementación de un Sistema de Gestión de Alarmas, bajo las normas API 1167 (Gestión de Alarmas SCADA en ductos), ISA 18.2 (Estándar de Gestión de Alarmas) y EEMUA 191 (Gestión de Sistemas de Alarma).","documento":"OC 4800049630","estado":"Cerrado"},{"id":"3029","codigo":"3029","tipo":"Proyecto","cliente":"CALIDDA","anio":2021,"nombre":"Calidda - Desarrollo de documentacion, socializacion de…","objeto":"desarrollo de documentacion, socializacion de procedimientos, reunion de orientacion e implementacion de herramienta semi-automatica SISTEMA DE GESTIÓN DE ALARMAS","estado":"Cerrado"},{"id":"2000-08","codigo":"2000-08","tipo":"Servicio","cliente":"CANACOL","anio":2019,"nombre":"Canacol - Servicio y equipos para mantenimiento preventivo y…","objeto":"Servicio y equipos para mantenimiento preventivo y predictivo válvulas secionadoras de las estaciones LFS","documento":"40-SO-2661","estado":"Cerrado"},{"id":"2000-13","codigo":"2000-13","tipo":"Servicio","cliente":"CANACOL","anio":2020,"nombre":"Canacol - Presupuestal servicio configuracion rtu honeywel…","objeto":"PRESUPUESTAL SERVICIO CONFIGURACION RTU HONEYWEL- NUEVA IMPLEMENTACIÓN SOBRE LOS PLCS INSTALADOS EN LFS. Incluyen 6 dias en campo para configuración y 6 dias en oficina","documento":"40-SO-2819","estado":"Cerrado"},{"id":"2000-17","codigo":"2000-17","tipo":"Servicio","cliente":"CANACOL","anio":2020,"nombre":"Canacol - Servicio de desarrollo contigencia hmi lfs","objeto":"SERVICIO DE DESARROLLO CONTIGENCIA HMI LFS","documento":"40 WO 7001","estado":"Cerrado"},{"id":"2007","codigo":"2007","tipo":"Servicio","cliente":"CANACOL","anio":2020,"nombre":"Canacol - Servicio, suministro de repuestos y soporte de…","objeto":"SERVICIO, SUMINISTRO DE REPUESTOS Y SOPORTE DE INTEGRACIÓN A LOS SISTEMAS DE CONTROL AUTOMÁTICO DE PROCESOS, SISTEMAS DE CONTROL HONEYWELL E IFIX DE GE, SISTEMAS DE REDES Y COMUNICACIONES","documento":"CNE-048-2020","estado":"Cerrado"},{"id":"2042","codigo":"2042","tipo":"Servicio","cliente":"CANACOL","anio":2025,"nombre":"Canacol - Mantenimiento sistemas de control (3 años)","objeto":"Servicio especializado de MANTENIMIENTO Y SOPORTE DE INTEGRACIÓN A LOS SISTEMAS DE CONTROL AUTOMÁTICO DE PROCESOS, SISTEMAS DE CONTROL HONEYWELL/IFIX, LINEAS DE FLUJO SABANAS Y TERMOTESORITO. SUMINISTRO DE REPUESTO PLC HONEYWELL CONTROLEDGE","documento":"CNE-103-2025","estado":"Contrato vigente","estadoExplicito":true,"notas":"Estado en la base anterior: Activo, Contrato mantenimiento por 3 años"},{"id":"3013","codigo":"3013","tipo":"Proyecto","cliente":"CELSIA","anio":2020,"nombre":"Celsia - Suministro de un gabinete con una RTU como computador…","objeto":"Suministro de un gabinete con una RTU como computador de flujo, más los dias de servicio en campo.","documento":"4000042787","estado":"Cerrado"},{"id":"2000-07","codigo":"2000-07","tipo":"Servicio","cliente":"CENIT","anio":2019,"nombre":"Cenit - Actualización y Soporte tecnico de software Synergi…","objeto":"Actualización y Soporte tecnico de software Synergi Pipeline Simulator, capacitación Software Synergi Pipeline Simulator","documento":"8000005434","estado":"Cerrado"},{"id":"2013","codigo":"2013","tipo":"Servicio","cliente":"CENIT","anio":2021,"nombre":"Cenit - Servicio ingeniero de instrumentación para la…","objeto":"SERVICIO INGENIERO DE INSTRUMENTACIÓN PARA LA CONFIGURACIÓN DE LA VELOCIDAD DEL SONIDO EN UN MEDIDOR ULTRASÓNICO CLAMP-ON MARCA HONEYWELL INSTALADO EN TUBERÍA DE 16”.","documento":"OC#4239","estado":"Cerrado"},{"id":"2014","codigo":"2014","tipo":"Servicio","cliente":"CENIT","anio":2021,"nombre":"Cenit - Servicio ingeniero de instrumentación para la…","objeto":"SERVICIO INGENIERO DE INSTRUMENTACIÓN PARA LA CONFIGURACIÓN DE LA VELOCIDAD DEL SONIDO EN UN MEDIDOR ULTRASÓNICO CLAMP-ON MARCA HONEYWELL INSTALADO EN TUBERÍA DE 16”.","documento":"OC-4739","estado":"Cerrado"},{"id":"3022","codigo":"3022","tipo":"Proyecto","cliente":"CENIT","anio":2021,"nombre":"Cenit - Implementación y servicio de SaaS (software como…","objeto":"Implementación y servicio de SaaS (software como servicio) de una plataforma digital basada en nube para el modelamiento hidráulico, simulación de flujo transitorio en tiempo real y optimización operativa","documento":"8000007555","estado":"Cerrado"},{"id":"2043","codigo":"2043","tipo":"Servicio","cliente":"COELCO","anio":2025,"nombre":"Coelco - Servicio de asistencia medidor de flujo y capacitacion…","objeto":"SERVICIO DE ASISTENCIA MEDIDOR DE FLUJO Y CAPACITACION / JACANA","documento":"2025-0125","estado":"Cerrado"},{"id":"2001","codigo":"2001","tipo":"Servicio","cliente":"DNVGL","anio":2019,"nombre":"Dnvgl - Curso synergi pipeline simulator sps","objeto":"curso SYNERGI PIPELINE SIMULATOR SPS","documento":"5500020965","estado":"Cerrado"},{"id":"2000-46","codigo":"2000-46","tipo":"Servicio","cliente":"ECI","anio":2023,"nombre":"Eci - Suministro de un configurador versatilis + curso de…","objeto":"SUMINISTRO DE UN CONFIGURADOR VERSATILIS + CURSO DE CAPACITACIÓN DE 4 HORAS DE MANERA VIRTUAL EN EL MANEJO DEL CONFIGURADOR VERSATILIS PARA INSTRUMENTACIÓN HART","documento":"OC-000015295-285","estado":"Cerrado"},{"id":"2006","codigo":"2006","tipo":"Servicio","cliente":"ECOPETROL","anio":2019,"nombre":"Ecopetrol - Servicio de mantenimiento preventivo, correctivo e…","objeto":"Servicio de mantenimiento preventivo, correctivo e ingeniería para los sistemas de control Experion de Honeywell de la Gerencia de Operaciones de Desarrollo y Producción Huila-Tolima de Ecopetrol S.A.","documento":"3022332","estado":"Cerrado"},{"id":"2000-42","codigo":"2000-42","tipo":"Servicio","cliente":"ECOPETROL","anio":2022,"nombre":"Ecopetrol - Asistencia tecnica y capacitación para el montaje…","objeto":"ASISTENCIA TECNICA Y CAPACITACIÓN PARA EL MONTAJE, INSTALACIÓN, ALISTAMIENTO, PRUEBAS EN SITIO, PUESTA EN SERVICIO DE INSTRUMENTOS, REQUERIDAS PARA EL PROYECTO ASEGURAMIENTO NORMATIVO Y SEGURIDAD DE PROCESOS DESHIDRATADORA GALAN PERTENENCIENTE AL HUB CENTRAL LA VICEPRESIDENCIA DE PROYECTOS Y PERFORACIÓN DE ECOPETROL S.A”","documento":"3041156","estado":"Cerrado"},{"id":"3032","codigo":"3032","tipo":"Proyecto","cliente":"ECOPETROL","anio":2022,"nombre":"Ecopetrol - Suministro de sistema instrumentado de seguridad y…","objeto":"SUMINISTRO DE SISTEMA INSTRUMENTADO DE SEGURIDAD Y FIRE AND GAS ASOCIADO AL PROYECTO ACTUALIZACIÓN TECNOLÓGICA DEL SISTEMA DE TRATAMIENTO DE AGUAS AGRIAS DEL LADO SUR DE LA GRB, PERTENECIENTE AL HUB CENTRAL DE LA VICEPRESIDENCIA DE DESARROLLO, PROYECTOS, PERFORACION Y COMPLETAMIENTO DE ECOPETROL S.A","documento":"3048284","estado":"Cerrado"},{"id":"3034","codigo":"3034","tipo":"Proyecto","cliente":"ECOPETROL","anio":2022,"nombre":"Ecopetrol - Servicio de capacitación, asistencia técnica para la…","objeto":"SERVICIO DE CAPACITACIÓN, ASISTENCIA TÉCNICA PARA LA INSTALACION, PROGRAMACIÓN, CONFIGURACIÓN, PARAMETRIZACIÓN, PRUEBAS, PUESTA EN MARCHA DE GABINETES RTU PARA (6) CLÚSTER (PEÑAS BLANCAS) REQUERIDOS POR EL PROYECTO CASABE WI MODULO III, PERTENECIENTE AL HUB CENTRAL DE LA VICEPRESIDENCIA DE DESARROLLO, PROYECTOS Y PERFORACIÓN DE ECOPETROL S.A.","documento":"3049951","estado":"Cerrado"},{"id":"3035","codigo":"3035","tipo":"Proyecto","cliente":"ECOPETROL","anio":2022,"nombre":"Ecopetrol - Actualización del sistema de control honeywell para el…","objeto":"ACTUALIZACIÓN DEL SISTEMA DE CONTROL HONEYWELL PARA EL ACCESO REMOTO (UNIDADES U800, U820, U840, U860, U8900, U45100, U45200, U5100, U5000, U4700, U4300, U4600) DE LAS PLANTAS PILOTO DEL CENTRO DE INNOVACIÓN Y TECNOLOGÍA ICP DE ECOPETROL S.A.","documento":"3050176","estado":"Cerrado"},{"id":"3036","codigo":"3036","tipo":"Proyecto","cliente":"ECOPETROL","anio":2022,"nombre":"Ecopetrol - Suministro y servicio especializado para las pruebas…","objeto":"SUMINISTRO Y SERVICIO ESPECIALIZADO PARA LAS PRUEBAS FUNCIONALES Y PUESTA EN MARCHA DE LOS GABINETES DEL SISTEMA DECONTROL DE LOS CLÚSTER DEL PROYECTO DESARROLLO AKACIAS A2.2 DEL ACTIVO CPO-09 DEL HUB LLANOS DE ECOPETROL S.A","documento":"3051240","estado":"Cerrado"},{"id":"2026","codigo":"2026","tipo":"Servicio","cliente":"ECOPETROL","anio":2024,"nombre":"Ecopetrol - Servicio especializado para las pruebas funcionales y…","objeto":"SERVICIO ESPECIALIZADO PARA LAS PRUEBAS FUNCIONALES Y PUESTA EN MARCHA DE LOS GABINETES DEL SISTEMA DE CONTROL DE LOS CLÚSTER DEL PROYECTO DESARROLLO AKACIAS A2.2 DEL ACTIVO CPO-09 DEL HUB ORINOQUIA DE ECOPETROL S.A.","documento":"5205494","estado":"Cerrado"},{"id":"2031","codigo":"2031","tipo":"Servicio","cliente":"ECOPETROL","anio":2024,"nombre":"Ecopetrol ICP - Mantenimiento integral Honeywell (5 años)","objeto":"SERVICIOS DE MANTENIMIENTO INTEGRAL A LOS SISTEMAS DE CONTROL DE LA MARCA HONEYWELL Y DEMÁS MARCAS EN REPRESENTACIÓN, A CARGO DEL CENTRO DE INNOVACIÓN Y TECNOLOGÍA ICP DE ECOPETROL S.A.","documento":"CW214181","estado":"Contrato vigente","estadoExplicito":true,"notas":"Estado en la base anterior: Activo, Contrato mantenimiento por 5 años, finalizacion en 2029"},{"id":"3051","codigo":"3051","tipo":"Proyecto","cliente":"ECOPETROL","anio":2024,"nombre":"Ecopetrol - Ingenieria suministro configuración y puesta en…","objeto":"INGENIERIA SUMINISTRO CONFIGURACIÓN Y PUESTA EN SERVICIO DEL SISTEMA DE CONTROL Y COMUNICACIONES DEL CPF DEL PROYECTO INTEGRACIÓN DE SEÑALES DE COMUNICACIÓN DEL ACTIVO CPO-09 DEL HUB ORINOQUIA DE ECOPETROL","documento":"CW216026","estado":"Cerrado"},{"id":"2034","codigo":"2034","tipo":"Servicio","cliente":"ECOPETROL","anio":2024,"nombre":"Ecopetrol - Servicio de actualización, ajustes y descarga de las…","objeto":"SERVICIO DE ACTUALIZACIÓN, AJUSTES Y DESCARGA DE LAS MODIFICACIONES EN EL CONTROLADOR DEL SIS ASOCIADO AL D-341 DEL PROYECTO AGUAS AGRIAS SUR DE LA GRB DE LA VICEPRESIDENCIA DE DESARROLLO Y PROYECTOS DE ECOPETROL S.A - HUB DOWNSTREAM","documento":"5207741","estado":"Cerrado"},{"id":"2000-21","codigo":"2000-21","tipo":"Servicio","cliente":"ELECON","anio":2021,"nombre":"Elecon - Servicios de configuración en campo, para microburbujeo","objeto":"Servicios de configuración en campo, para microburbujeo","documento":"281","estado":"Cerrado"},{"id":"2011","codigo":"2011","tipo":"Servicio","cliente":"ELECON","anio":2021,"nombre":"Elecon - Servicios de configuración en campo, para integración…","objeto":"Servicios de configuración en campo, para integración de SKIM.","documento":"240","estado":"Cerrado"},{"id":"2000-10","codigo":"2000-10","tipo":"Servicio","cliente":"ENEL","anio":2019,"nombre":"Enel - Licencias Honeywell","objeto":"Licencias Honeywell","documento":"OC 55674398 OC-PSL-19-026","estado":"Cerrado"},{"id":"2045","codigo":"2045","tipo":"Servicio","cliente":"EMPORIO","anio":2026,"nombre":"Emporio - SCADA de pozos CPO9","objeto":"ASISTENCIA TECNICA CONFIGURACIÓN Y PRUEBAS FUNCIONALES DEL SCADA DE POZOS HONEYWELL-EXPERION DE FACILIDADES DEL CAMPO CPO9","documento":"OS-5381-2026","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado"},{"id":"2000-03","codigo":"2000-03","tipo":"Servicio","cliente":"ESSENTIA","anio":2019,"nombre":"Essentia - Servicio sistema de control deltav","objeto":"SERVICIO SISTEMA DE CONTROL DELTAV","documento":"5600150643","estado":"Cerrado"},{"id":"2000-24","codigo":"2000-24","tipo":"Servicio","cliente":"ESSENTIA","anio":2021,"nombre":"Essentia - Servicio de soporte remoto y resolución de problemas…","objeto":"SERVICIO DE SOPORTE REMOTO Y RESOLUCIÓN DE PROBLEMAS RTU 2020","documento":"5600181429","estado":"Cerrado"},{"id":"2000-27","codigo":"2000-27","tipo":"Servicio","cliente":"ESSENTIA","anio":2022,"nombre":"Essentia - Suministrar, configurar e instalar control station de…","objeto":"Suministrar, configurar e instalar control station de 15\"","documento":"5600183314","estado":"Cerrado"},{"id":"2000-44","codigo":"2000-44","tipo":"Servicio","cliente":"ESSENTIA","anio":2023,"nombre":"Essentia - Entrenamiento, en configuración, arranque y puesta en…","objeto":"Entrenamiento, en configuración, arranque y puesta en marcha de ControlEdge RTU.","documento":"5600192319","estado":"Cerrado"},{"id":"3020","codigo":"3020","tipo":"Proyecto","cliente":"FRONTERA","anio":2021,"nombre":"Frontera - Suministro de tres (3) bombas de disco para…","objeto":"suministro de tres (3) bombas de disco para aplicaciónde bombas de transferencia tanque de cabeza y despacho de crudo en cargadero, para el campoCPE6 y sus respectivos tableros de distribución y variadores, así como el servicio para arranque ypuesta en marcha de las bombas","documento":"C1069","estado":"Cerrado"},{"id":"3025","codigo":"3025","tipo":"Proyecto","cliente":"FRONTERA","anio":2021,"nombre":"Frontera - Suministro de tres (3) bombas de disco para aplicación…","objeto":"Suministro de tres (3) bombas de disco para aplicación de bombas de transferencia tanque de cabeza y sus respectivos tableros de distribución y variadores, así como el servicio para arranque y puesta en marcha de las bombas. Suministro de (1) bomba de disco para Natas.","documento":"C1283","estado":"Cerrado"},{"id":"3037","codigo":"3037","tipo":"Proyecto","cliente":"FRONTERA","anio":2022,"nombre":"Frontera - El suministro de una (1) bomba de disco para…","objeto":"el suministro de una (1) bomba de disco para aplicaciónde bomba de transferencia tanque de cabeza y su respectivo tablero de distribución y variador, y lacotización del servicio para arranque y puesta en marcha de la bomba","documento":"C1763","estado":"Cerrado"},{"id":"3041","codigo":"3041","tipo":"Proyecto","cliente":"FRONTERA","anio":2023,"nombre":"Frontera - Como representantes para Colombia y Argentina de la…","objeto":"Como representantes para Colombia y Argentina de la marca DISCFLO, nos complace presentar austedes la propuesta PS-23-037-JP para el suministro de una (1) bomba de disco para aplicaciónde bomba de transferencia tanque de cabeza y su respectivo tablero de distribución y variador, yla cotización del servicio para arranque y puesta en marcha de la bomba.","documento":"C1856","estado":"Cerrado"},{"id":"3042","codigo":"3042","tipo":"Proyecto","cliente":"FRONTERA","anio":2023,"nombre":"Frontera - Diseño, fabricación y suministro de dos (2)bombas de…","objeto":"DISEÑO, FABRICACIÓN Y SUMINISTRO DE DOS (2)BOMBAS DE NATAS CON VFD CAPACIDAD 160 GPM","documento":"C1903","estado":"Cerrado"},{"id":"3044","codigo":"3044","tipo":"Proyecto","cliente":"FRONTERA","anio":2023,"nombre":"Frontera - Diseño, fabricación y suministro de una (1) Bomba de…","objeto":"Diseño, fabricación y suministro de una (1) Bomba de Crudo con VFD capacidad 500 gpm.para el proyecto de Mejoras descargadero y cargadero como parte de la etapa 240K deCPE6 de Frontera Energy.","documento":"C1901","estado":"Cerrado"},{"id":"3045","codigo":"3045","tipo":"Proyecto","cliente":"FRONTERA","anio":2023,"nombre":"Frontera - Diseño, fabricación y suministro de una (1) Bomba con…","objeto":"Diseño, fabricación y suministro de una (1) Bomba con capacidad 500 gpm con VFD","documento":"C2067","estado":"Cerrado"},{"id":"2000-04","codigo":"2000-04","tipo":"Servicio","cliente":"GARLAS","anio":2019,"nombre":"Garlas - Servicio levantamiento en campo de un sistema de…","objeto":"SERVICIO LEVANTAMIENTO EN CAMPO DE UN SISTEMA DE CONTROL HC900/ EXPERION HS","estado":"Cerrado"},{"id":"2038","codigo":"2038","tipo":"Servicio","cliente":"GENSA","anio":2025,"nombre":"Gensa - Servicio De Carga De Backup, Pruebas Y Puesta En…","objeto":"Servicio De Carga De Backup, Pruebas Y Puesta En Marcha Para Plc, Hc900 De Honeywell Del Nivel Del Condensador De La Unidad 1 De Termopaipa","documento":"CONTRATO 140-13.07-0023-2025","estado":"Cerrado"},{"id":"3055","codigo":"3055","tipo":"Proyecto","cliente":"GENSA","anio":2025,"nombre":"Gensa - HMIs Termopaipa","objeto":"CONFIGURACIÓN HMI's TERMOPAIPA","documento":"CONTRATO SERVICIOS","estado":"Ejecutado pendiente de pago","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado, pendiente de pago"},{"id":"2000-15","codigo":"2000-15","tipo":"Servicio","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Cambio de posicionadores de las válvulas de control…","objeto":"Cambio de posicionadores de las válvulas de control Metso","estado":"Cerrado","notas":"Código repetido en la base anterior (también: MANUELITA)","duplicado":true},{"id":"2000-15_manuelita","codigo":"2000-15","tipo":"Servicio","cliente":"MANUELITA","anio":2020,"nombre":"Manuelita - Servicio en planta para la instalación y puesta en…","objeto":"SERVICIO EN PLANTA PARA LA INSTALACIÓN Y PUESTA EN MARCHA DE TARJETA HONEYWELL","documento":"3400176704","estado":"Cerrado","notas":"Código repetido en la base anterior (también: GEOPARK)","duplicado":true},{"id":"2000-18","codigo":"2000-18","tipo":"Servicio","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Suministro de personal para operación de la estación…","objeto":"Suministro de personal para operación de la estación Tigana","documento":"4400017173","estado":"Cerrado"},{"id":"3002","codigo":"3002","tipo":"Proyecto","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Suministro e intalación de equipo, fibra óptica y…","objeto":"Suministro e intalación de equipo, fibra óptica y software; Servicio de configuración, capacitación y puesta en marcha del sistema de detección de fugas e instrusos para monitoreo Línea de Flujo de 14\"","documento":"6000003968","estado":"Cerrado"},{"id":"3003","codigo":"3003","tipo":"Proyecto","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Suministro de Sistema de Control y Sistema…","objeto":"Suministro de Sistema de Control y Sistema Instrumentado de Seguridad de los Proyectos Línea de Flujo 14” y Jacana Fase IV","documento":"6000004734","estado":"Cerrado"},{"id":"3004","codigo":"3004","tipo":"Proyecto","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Sistemas bpcs y sis","objeto":"SISTEMAS BPCS Y SIS","estado":"Cerrado"},{"id":"3015","codigo":"3015","tipo":"Proyecto","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Suministro, asistencia en la instalación…","objeto":"Suministro, asistencia en la instalación, configuración y puesta en marcha de los sistema requeridos para la automatización, control e integración de estación Tigana Sur con las estaciones de Oleoducto Llanos 34","documento":"6000006666","estado":"Cerrado"},{"id":"3017","codigo":"3017","tipo":"Proyecto","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Sistema de control pozo inyeccion agua","objeto":"SISTEMA DE CONTROL POZO INYECCION AGUA","documento":"4500008283","estado":"Cerrado"},{"id":"3018","codigo":"3018","tipo":"Proyecto","cliente":"GEOPARK","anio":2020,"nombre":"Geopark - Suministro a título de venta de un sistema de control…","objeto":"Suministro a título de venta de un sistema de control SCADA para ampliación de facilidades de inyección de agua y producción Tigana Sur Fase VI","documento":"6000006782","estado":"Cerrado"},{"id":"2016","codigo":"2016","tipo":"Servicio","cliente":"GEOPARK","anio":2021,"nombre":"Geopark - Plan de servicio de soporte remoto 24x7 de los…","objeto":"PLAN DE SERVICIO DE SOPORTE REMOTO 24x7 DE LOS SISTEMAS DE CONTROL HONEYWELL PARA LAS ESTACIONES DEL OLEODUCTO DEL CASANARE: JACANA ODCA, JAGUEY ODCA, RÍO TÚA, PIÑALITO, TACUYA Y TIGANA ODCA","documento":"4400019096","estado":"Cerrado"},{"id":"3019","codigo":"3019","tipo":"Proyecto","cliente":"GEOPARK","anio":2021,"nombre":"Geopark - Compra de inyección tigana 8 para el área de…","objeto":"COMPRA DE INYECCIÓN TIGANA 8 PARA EL ÁREA DE INGENIERÍA GEOPARK","documento":"4500008730","estado":"Cerrado"},{"id":"3023","codigo":"3023","tipo":"Proyecto","cliente":"GEOPARK","anio":2021,"nombre":"Geopark - Instrumentacion de Stcok y tablero de control PLC y…","objeto":"instrumentacion de Stcok y tablero de control PLC y sistema de autonomia","documento":"45000009538","estado":"Cerrado"},{"id":"3027","codigo":"3027","tipo":"Proyecto","cliente":"GEOPARK","anio":2021,"nombre":"Geopark - Tablero de control con RTU 2020, servicio de…","objeto":"Tablero de control con RTU 2020, servicio de configuracion, 20 servicio en campo y licencia de ampliacion experion HS Tigana","documento":"45000009747","estado":"Cerrado"},{"id":"3028","codigo":"3028","tipo":"Proyecto","cliente":"GEOPARK","anio":2021,"nombre":"Geopark - Diseño, suministro de materiales, ensamble gabinetes…","objeto":"diseño, suministro de materiales, ensamble gabinetes, inspección, montaje, configuración, pruebas FAT, SAT Y SIT, pre-comisionamiento, comisionamiento, preparación para transporte, despacho de equipos, puesta en servicio y estabilización del sistema del TABLERO DE CONTROL GPK-IJFV-JAC-INS-S001-11.","documento":"4500009792","estado":"Cerrado"},{"id":"2000-35","codigo":"2000-35","tipo":"Servicio","cliente":"GEOPARK","anio":2022,"nombre":"Geopark - Servicio de integración de la planta 50k al sistema…","objeto":"SERVICIO DE INTEGRACIÓN DE LA PLANTA 50K AL SISTEMA SCADA HONEYWELL EN JACANA","documento":"4400020356","estado":"Cerrado"},{"id":"2000-41","codigo":"2000-41","tipo":"Servicio","cliente":"GEOPARK","anio":2022,"nombre":"Geopark - Servicio de suministro de software y acompañamiento…","objeto":"SERVICIO DE SUMINISTRO DE SOFTWARE Y ACOMPAÑAMIENTO PARA HABILITACION DE SALIDA DE DATOS DE TELEMETRIA EN SISTEMA SCADA EXPERION LX TIGANA SUR EN PROTOCOLO OPC UA","documento":"4400021355","estado":"Cerrado"},{"id":"2021","codigo":"2021","tipo":"Servicio","cliente":"GEOPARK","anio":2022,"nombre":"Geopark - Servicio técnico especializado para los sistemas de…","objeto":"SERVICIO TÉCNICO ESPECIALIZADO PARA LOS SISTEMAS DE CONTROL, AUTOMATIZACIÓN Y COMUNICACIONES DE LA MARCA HONEYWELL (LLANOS 34) | SERVICIO TÉCNICO ESPECIALIZADO PARA LOS SISTEMAS DE CONTROL, AUTOMATIZACIÓN Y COMUNICACIONES DE LA MARCA HONEYWELL (OLEODUCTO)","documento":"4400021039 / 4400021040","estado":"Cerrado","notas":"Unifica 2 registros de la base anterior con el mismo código"},{"id":"3031","codigo":"3031","tipo":"Proyecto","cliente":"GEOPARK","anio":2022,"nombre":"Geopark - Servicio compuesto por el diseño ingenieril…","objeto":"Servicio compuesto por el diseño ingenieril, documentación, armado de cada tablero, pruebas eléctricas, pruebas de comunicaciones, pruebas de funcionamiento, pruebas de configuración, planos eléctricos, planos, mecánicos. Servicio en campo para el comisionamiento y puesta en marcha de los 4 tableros de control.","documento":"4500010907","estado":"Cerrado"},{"id":"3033","codigo":"3033","tipo":"Proyecto","cliente":"GEOPARK","anio":2022,"nombre":"Geopark - Servicio compuesto por el diseño ingeniería…","objeto":"Servicio compuesto por el diseño ingeniería, documentación, armado de cada tablero, pruebas eléctricas, pruebas de comunicaciones, pruebas de funcionamiento, pruebas de configuración, planos eléctricos, planos, mecánicos. Servicio en campo para el comisionamiento y puesta en marcha de los 4 tableros de control.","documento":"4500011544","estado":"Cerrado"},{"id":"3039","codigo":"3039","tipo":"Proyecto","cliente":"GEOPARK","anio":2023,"nombre":"Geopark - Actualización del sistema scada experion hs release…","objeto":"ACTUALIZACIÓN DEL SISTEMA SCADA EXPERION HS RELEASE 500 ASOCIADOS AL SISTEMA DE CONTROL DEL GASODUCTO DE TIGANA CENTRAL","documento":"4400021528","estado":"Cerrado"},{"id":"3040","codigo":"3040","tipo":"Proyecto","cliente":"GEOPARK","anio":2023,"nombre":"Geopark - Servicio compuesto por el diseño ingeniería…","objeto":"Servicio compuesto por el diseño ingeniería, documentación, armado de cada tablero, pruebas eléctricas, pruebas de comunicaciones, pruebas de funcionamiento, pruebas de configuración, planos eléctricos, planos, mecánicos. Servicio en campo para el comisionamiento y puesta en marcha de los 3 tableros de control.","documento":"4500012283","estado":"Cerrado"},{"id":"3043","codigo":"3043","tipo":"Proyecto","cliente":"GEOPARK","anio":2023,"nombre":"Geopark - Servicio compuesto por el diseño ingeniería…","objeto":"Servicio compuesto por el diseño ingeniería, documentación, armado de cada tablero, pruebas eléctricas, pruebas de comunicaciones, pruebas de funcionamiento, pruebas de configuración, planos eléctricos, planos, mecánicos. Servicio en campo para el comisionamiento y puesta en marcha de los 2 tableros de control.","documento":"4500012283","estado":"Cerrado"},{"id":"3050","codigo":"3050","tipo":"Proyecto","cliente":"GEOPARK","anio":2024,"nombre":"Geopark - SUMINISTRO DE COMPONENTES PARA DOS SISTEMAS DE…","objeto":"SUMINISTRO DE COMPONENTES PARA DOS SISTEMAS DE DETECCIÓN Y ALARMA, UNO PARA TIGANA Y UNO PARA JACANA. JACANA CONSTA DE: 5 detectores de humo, 1 panel de alarma Notifier, 2 alamas sonoras, 2 anunciador , 1 alarma luz, 2 estaciones manuales. EL SEGUNDO CONSTA DE: 3 detectores de humo, 1 panel de alarma Notifier, 2 alamas sonoras, 2 anunciador , 4 alarma luz, 2 estaciones manuales. | PUESTA EN MARCHA Y CAPACITACION DE DOS SISTEMAS DE DETECCIÓN Y ALARMA , UNO EN TIGANA Y OTRO EN JACANA. ESTE SERVICIO VA UNIDO AL SUMINISTRO DEL PROYECTO 3050","documento":"4500016067 / 4400023231","estado":"Cerrado","notas":"Unifica 2 registros de la base anterior con el mismo código"},{"id":"2036","codigo":"2036","tipo":"Servicio","cliente":"GEOPARK","anio":2025,"nombre":"GeoPark - Servicio técnico Honeywell (3 años)","objeto":"SERVICIO TÉCNICO ESPECIALIZADO PARA LOS SISTEMAS DE CONTROL, AUTOMATIZACIÓN Y COMUNICACIONES DE LA MARCA HONEYWELL","documento":"6000008448","estado":"Contrato vigente","estadoExplicito":true,"notas":"Estado en la base anterior: Activo, contrato mantenimiento por 3 años vamos finalizando el segundo año"},{"id":"1000-01","codigo":"1000-01","tipo":"Servicio","cliente":"GRANTIERRA","anio":2019,"nombre":"GRANTIERRA","estado":"Cerrado"},{"id":"3012","codigo":"3012","tipo":"Proyecto","cliente":"GRANTIERRA","anio":2020,"nombre":"Grantierra - Gestion de alarmas campo acordionero – marco gran…","objeto":"GESTION DE ALARMAS CAMPO ACORDIONERO – MARCO GRAN TIERRA","documento":"CST-3119-019-001-2020","estado":"Cerrado"},{"id":"2017","codigo":"2017","tipo":"Servicio","cliente":"HMV","anio":2022,"nombre":"Hmv - Plataforma digital basada en nube para el modelamiento…","objeto":"PLATAFORMA DIGITAL BASADA EN NUBE PARA EL MODELAMIENTO HIDRÁULICO, SIMULACIÓN DE FLUJO TRANSITORIO Y OPTIMIZACIÓN OPERATIVA EN TIEMPO REAL","estado":"Cerrado"},{"id":"2023","codigo":"2023","tipo":"Servicio","cliente":"HMV","anio":2023,"nombre":"Hmv - Simulación Stoner Para cada escenario, con arranque y…","objeto":"Simulación Stoner Para cada escenario, con arranque y parada, 140 HH.","documento":"SO11914 - 0","estado":"Cerrado"},{"id":"2009","codigo":"2009","tipo":"Servicio","cliente":"HOCOL","anio":2021,"nombre":"Hocol - Servicio para la migracion de la lógica de control de…","objeto":"SERVICIO PARA LA MIGRACION DE LA LÓGICA DE CONTROL DE UN MARTER LOGIC A UNA RTU 2020 DE HONEYWELL, PRECOMISIONAMIENTO, COMISIONAMIENTO Y PUESTA EN MARCHA EN CAMPO OCELOTE.","documento":"Y - 001 - 503","estado":"Cerrado"},{"id":"2015","codigo":"2015","tipo":"Servicio","cliente":"HOCOL","anio":2021,"nombre":"Hocol - Servicio para el desarrollo de script de punto –…","objeto":"Servicio para el desarrollo de script de punto – periódico y librería para habilitación de shutdown de pozos.","documento":"1000138876","estado":"Cerrado"},{"id":"3021","codigo":"3021","tipo":"Proyecto","cliente":"HOCOL","anio":2021,"nombre":"Hocol - Actualización sistema SCADA instalado en Bogotá…","objeto":"Actualización sistema SCADA instalado en Bogotá Instalación de infraestructura en Campo Ocelote HONEYWELL Process History Database (PHD) Software PHD, Uniformance Process History & Analytics CX SERVICIO DE CONFIGURACIÓN INTEGRACION FACTORY TALK VIEW A EXPERION, CAMPO OCELOTE. Se estima como máximo la integración de 8000 Tags.","documento":"C21 0041","estado":"Cerrado"},{"id":"3024","codigo":"3024","tipo":"Proyecto","cliente":"HOCOL","anio":2021,"nombre":"Hocol - Suministro de los instrumentos y equipos de…","objeto":"SUMINISTRO DE LOS INSTRUMENTOS Y EQUIPOS DE COMUNICACIÓN PARA LOS CLUSTERS Y POZOS DE LA CAMPAÑA DE PERFORACIÓN GUARROJO 2021- B21-1173 SP 1100013226","documento":"110025486","estado":"Cerrado"},{"id":"2000-30","codigo":"2000-30","tipo":"Servicio","cliente":"HOCOL","anio":2022,"nombre":"Hocol - Matrikon license opc ua tunneller (2) matrikon data…","objeto":"MATRIKON LICENSE OPC UA TUNNELLER (2) MATRIKON DATA BROKER LICENSE (2) Licencia para EXPERION LX, OPC Data Access (1) Servicio de configuracion y puesta en marcha en Bogota (2)","documento":"110027749","estado":"Cerrado"},{"id":"2000-31","codigo":"2000-31","tipo":"Servicio","cliente":"HOCOL","anio":2022,"nombre":"Hocol - Ervicio en campo por día para puesta en marcha de…","objeto":"ervicio en campo por día para puesta en marcha de Instrumentos LIT, a todo costo USD $ 600/DÍA 8 Días todo incluido, transporte ida y regreso, gastos de viaje, puesta en marcha.","documento":"110025486","estado":"Cerrado"},{"id":"2000-33","codigo":"2000-33","tipo":"Servicio","cliente":"HOCOL","anio":2022,"nombre":"Hocol - Servicio especializado para plcs honeywell hc900 y…","objeto":"SERVICIO ESPECIALIZADO PARA PLCS HONEYWELL HC900 Y MASTERLOGIC PARA CONFIGURACIÓN DE NUEVAS SEÑALES, PRUEBAS DE LÓGICA, PRUEBAS DE LAZO Y VALIDACIÓN DE LOS DATOS EN SCADA DEL SISTEMA DE INYECCIÓN DEL CAMPO LA HOCHA","documento":"110028443","estado":"Cerrado"},{"id":"2000-34","codigo":"2000-34","tipo":"Servicio","cliente":"HOCOL","anio":2022,"nombre":"Hocol - Servicio Instalación y SAT-SIT para RTUs. Incluye…","objeto":"Servicio Instalación y SAT-SIT para RTUs. Incluye pantallas, integración con SCADA, Protocolo Modbus, Señales de medidor nuevo y antiguo - DDP Campo Ocelote - Vereda la Cristalina - Municipio de Puerto Gaitán, Departamento del META.","documento":"1000163740","estado":"Cerrado"},{"id":"2000-36","codigo":"2000-36","tipo":"Servicio","cliente":"HOCOL","anio":2022,"nombre":"Hocol - Servicio en campo para puesta en marcha de transmisor…","objeto":"Servicio en campo para puesta en marcha de transmisor indicador de nivel tipo radar, todo incluido, transporte ida y regreso, gastos de viaje, puesta en marcha.","documento":"110028553","estado":"Cerrado"},{"id":"2000-40","codigo":"2000-40","tipo":"Servicio","cliente":"HOCOL","anio":2022,"nombre":"Hocol - Calibracion de equipos e instrumentos","objeto":"CALIBRACION DE EQUIPOS E INSTRUMENTOS","documento":"110030280","estado":"Cerrado"},{"id":"2000-48","codigo":"2000-48","tipo":"Servicio","cliente":"HOCOL","anio":2023,"nombre":"Hocol - Inspección del flare tip, registro fotográfico…","objeto":"INSPECCIÓN DEL FLARE TIP, REGISTRO FOTOGRÁFICO, HALLAZGOS, DIAGNÓSTICO Y RECOMENDACIONES LUEGO DEL IMPACTO PRODUCIDO POR COLISIÓN O CAÍDA DEL GUACAL QUE LO TRANSPORTABA.","documento":"110032341","estado":"Cerrado"},{"id":"2022","codigo":"2022","tipo":"Servicio","cliente":"HOCOL","anio":2023,"nombre":"Hocol - Plan de servicio de soporte remoto 5x8 y servicio…","objeto":"PLAN DE SERVICIO DE SOPORTE REMOTO 5X8 Y SERVICIO PRESENCIAL PARA LOS SISTEMAS EXPERION DE HOCO","documento":"110031406","estado":"Cerrado"},{"id":"3049","codigo":"3049","tipo":"Proyecto","cliente":"HOCOL","anio":2024,"nombre":"Hocol - Actualización del sistema de control campo la hocha…","objeto":"ACTUALIZACIÓN DEL SISTEMA DE CONTROL CAMPO LA HOCHA (SUMINISTRO DE HARDWARE Y SOFTWARE), INCLUYE CONFIGURACIÓN E IMPLEMENTACIÓN.","documento":"110036372","estado":"Cerrado"},{"id":"2030","codigo":"2030","tipo":"Servicio","cliente":"HOCOL","anio":2024,"nombre":"Hocol - Servicio en campo para la puesta en marcha de 2…","objeto":"SERVICIO EN CAMPO PARA LA PUESTA EN MARCHA DE 2 RADARES DE ONDA GUIADA REFERENCIA: SLG720-SWAW00VM03600-AS4A-A-CH0-1001S-A-1A0-FX,F1,02-00000 CON INDICADOR REMOTO RMA801-K-ADA-1S-71A0-F3,02-0000 El servicio en campo se ejecutará en 8 días ingeniero , se incluye movilizacion y gastos de viaje y viaticos","documento":"110035430","estado":"Cerrado"},{"id":"2041","codigo":"2041","tipo":"Servicio","cliente":"HOCOL","anio":2025,"nombre":"Hocol - Instrumentos Booster Arrecife","objeto":"Suministro de instrumentos de flujo y presión para el proyecto Compresión Booster Arrecife B24-3466","documento":"OC 110038998","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado"},{"id":"2047","codigo":"2047","tipo":"Servicio","cliente":"HOCOL","anio":2026,"nombre":"Hocol - Computadores de flujo Booster Arrecife","objeto":"COMISIONAMIENTO COMPUTADORES DE FLUJO PROYECTO COMPRESIÓN BOOSTER ARRECIFE","documento":"OC 110042502","estado":"Por ejecutar","estadoExplicito":true,"notas":"Estado en la base anterior: Pendiente a ejecutar 26 Octubre"},{"id":"2000-09","codigo":"2000-09","tipo":"Servicio","cliente":"HONEYWELL","anio":2019,"nombre":"Honeywell - Horas de servicio de Ingeniero de control para…","objeto":"Horas de servicio de Ingeniero de control para configuración de DCS HONEYWELL.","documento":"PA-000009","estado":"Cerrado","notas":"Honeywell Panamá"},{"id":"2000-14","codigo":"2000-14","tipo":"Servicio","cliente":"HONEYWELL","anio":2020,"nombre":"Honeywell - Servicio día ingeniero especialista en plataforma…","objeto":"SERVICIO DÍA INGENIERO ESPECIALISTA EN PLATAFORMA CONTROL EXPERION C300 | HORAS DE SERVICIO INGENIERO ESPECIALISTA EN PLATAFORMA DE CONTROL EXPERION C300 Y/O HONEYWELL SAFETY MANAGER","documento":"6889 / 6890","estado":"Cerrado","notas":"Unifica 2 registros de la base anterior con el mismo código"},{"id":"2000-19","codigo":"2000-19","tipo":"Servicio","cliente":"HONEYWELL","anio":2020,"nombre":"Honeywell - Horas de asistencia tecnica para configuración…","objeto":"HORAS DE ASISTENCIA TECNICA PARA CONFIGURACIÓN, SOPORTE Y MANTENIMIENTO DE SISTEMA DE CONTROL HONEYWELL SCADA (DIURNO, DOMINICAL, FERIADO O NOCTURNO)","documento":"7568","estado":"Cerrado","notas":"Código repetido en la base anterior (también: UNIDUCTOS)","duplicado":true},{"id":"2000-19_uniductos","codigo":"2000-19","tipo":"Servicio","cliente":"UNIDUCTOS","anio":2021,"nombre":"Uniductos - Servicio de cuadrilla de instrumentación de montaje…","objeto":"Servicio de cuadrilla de instrumentación de montaje, pruebas y puesta en marcha para medidor de flujo de 16\"","documento":"3410","estado":"Cerrado","notas":"Código repetido en la base anterior (también: HONEYWELL)","duplicado":true},{"id":"2000-29","codigo":"2000-29","tipo":"Servicio","cliente":"HONEYWELL","anio":2022,"nombre":"Honeywell - Servicio ingeniero de control para configuración…","objeto":"SERVICIO INGENIERO DE CONTROL PARA CONFIGURACIÓN, COMISIONAMIENTO DE ESTRATEGIAS DE CONTROL","estado":"Cerrado"},{"id":"2000-45","codigo":"2000-45","tipo":"Servicio","cliente":"HYTECH","anio":2023,"nombre":"Hytech - Licencia SPS-StandAlone","objeto":"Licencia SPS-StandAlone","documento":"1744 / 1693","estado":"Cerrado"},{"id":"2028","codigo":"2028","tipo":"Servicio","cliente":"INARCON","anio":2024,"nombre":"Inarcon - Servicio de diagnóstico para detección de falla de plc…","objeto":"SERVICIO DE DIAGNÓSTICO PARA DETECCIÓN DE FALLA DE PLC HC900","documento":"225-24","estado":"Cerrado"},{"id":"3026","codigo":"3026","tipo":"Proyecto","cliente":"INGCONS","anio":2021,"nombre":"Ingcons - Sistema de control proyecto jobo- tesorito","objeto":"SISTEMA DE CONTROL PROYECTO JOBO- TESORITO","documento":"CO-21-175-TET-CI-015","estado":"Cerrado"},{"id":"3030","codigo":"3030","tipo":"Proyecto","cliente":"INGCONS","anio":2022,"nombre":"Ingcons - Orden de compra no. ingc-co-22-182-rcp-oc-013 sistema…","objeto":"ORDEN DE COMPRA No. INGC-CO-22-182-RCP-OC-013 SISTEMA DE CONTROL PATINES DE FILTRACION F1-F2-F3-F4","documento":"CO-22-182-RCP-OC-013","estado":"Cerrado"},{"id":"2000-02","codigo":"2000-02","tipo":"Servicio","cliente":"LAVALIN","anio":2019,"nombre":"Lavalin - Taller hazop 2 días en bogotá","objeto":"TALLER HAZOP 2 DÍAS EN BOGOTÁ","documento":"101N2M-P0490-M07864","estado":"Cerrado"},{"id":"2010","codigo":"2010","tipo":"Servicio","cliente":"LAVALIN","anio":2021,"nombre":"Lavalin - Servicio de simulación hidráulica en software SPS para…","objeto":"Servicio de simulación hidráulica en software SPS para rebombeo Salgar-Mansilla","documento":"101N3R-1021-50-C10028","estado":"Cerrado"},{"id":"2000-32","codigo":"2000-32","tipo":"Servicio","cliente":"M&M","anio":2022,"nombre":"M&M - Día de ingeniero en campo para el servicio de…","objeto":"DÍA DE INGENIERO EN CAMPO PARA EL SERVICIO DE DESPLAZAMIENTO DE BOTONERAS DE PARO DE EMERGENCIA PARA LA ESTACIÓN TIGANA","documento":"4 012 0114","estado":"Cerrado"},{"id":"2000-05","codigo":"2000-05","tipo":"Servicio","cliente":"MASSY","anio":2019,"nombre":"Massy - Revisión, diagnostico y puesta en servicio de los 18…","objeto":"REVISIÓN, DIAGNOSTICO Y PUESTA EN SERVICIO DE LOS 18 RADARES DE LA PLANTA DE ESTABILIZACIÓN DE CONDENSADOS","estado":"Cerrado"},{"id":"2000-20","codigo":"2000-20","tipo":"Servicio","cliente":"MAYAGUEZ","anio":2021,"nombre":"Mayaguez - Servicio de diagnostico y generación de hojas de vida…","objeto":"SERVICIO DE DIAGNOSTICO Y GENERACIÓN DE HOJAS DE VIDA EN LOS SISTEMAS FSC Y HC900 DEL F&G DE LA PLANTA DE MAYAGUEZ","documento":"5000133440","estado":"Cerrado"},{"id":"2000-25","codigo":"2000-25","tipo":"Servicio","cliente":"MAYAGUEZ","anio":2022,"nombre":"Mayaguez - Servicio de configuración hmi planta destilería y…","objeto":"SERVICIO DE CONFIGURACIÓN HMI PLANTA DESTILERÍA Y LLENADERO","documento":"5000140550","estado":"Cerrado"},{"id":"3052","codigo":"3052","tipo":"Proyecto","cliente":"NG-Energy","anio":2025,"nombre":"NG-Energy - La compra de una (1) tablero I/O remoto para el…","objeto":"La compra de una (1) tablero I/O remoto para el sistema Dew-Point y un (1) conjunto de accesorios para el tablero PLC principal del sistema Dew-Point","documento":"OC 20250813-003","estado":"Cerrado","notas":"Código repetido en la base anterior (también: SURENERGY)","duplicado":true},{"id":"3052_surenergy","codigo":"3052","tipo":"Proyecto","cliente":"SURENERGY","anio":2025,"nombre":"Surenergy - Integración Dew Point Sinú 9","objeto":"INTEGRACIÓN SISTEMA CONTROL DEW POINT, SINÚ-9","documento":"CONTRATO SERVICIOS","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado · Código repetido en la base anterior (también: NG-Energy)","duplicado":true},{"id":"2000-11","codigo":"2000-11","tipo":"Servicio","cliente":"ODL","anio":2020,"nombre":"Odl - Hora de ingeniero especialista en simulación del…","objeto":"Hora de ingeniero especialista en simulación del software SPS para el servicio de simulación y consultoría por llamado.","estado":"Cerrado"},{"id":"2024","codigo":"2024","tipo":"Servicio","cliente":"OSINERGMIN","anio":2023,"nombre":"Osinergmin - Servicio simulaciones hidraulicas en ductos de…","objeto":"SERVICIO SIMULACIONES HIDRAULICAS EN DUCTOS DE TRANSPORTE DE GN","documento":"OS2300470","estado":"Cerrado"},{"id":"3046","codigo":"3046","tipo":"Proyecto","cliente":"OSINERGMIN","anio":2023,"nombre":"Osinergmin - Instalacion, adquisicion, charlas tecnicas, soporte…","objeto":"Instalacion, adquisicion, charlas tecnicas, soporte tecnico y mantenimiento de licencias Synergi Gas y SPS. ADQUISICIÓN DE LICENCIAS SYNERGI DE LA MARCA DNV, ACTUALIZACION Y MANTENIMIENTO”","documento":"N° 18-2023-OSINERGMIN","estado":"Cerrado"},{"id":"2037","codigo":"2037","tipo":"Servicio","cliente":"OSINERGMIN","anio":2025,"nombre":"Osinergmin - Servicio de actualización de los modelos hidráulicos…","objeto":"SERVICIO DE ACTUALIZACIÓN DE LOS MODELOS HIDRÁULICOS DE VENTEO DE GAS NATURAL CONSIDERANDO LAS NUEVAS DISPOSICIONES TECNOLÓGICAS Y PRÁCTICAS INTERNACIONALES. SIGED 202500038582","documento":"OS2500077","estado":"Cerrado"},{"id":"3014","codigo":"3014","tipo":"Proyecto","cliente":"PAREX","anio":2020,"nombre":"Parex - Suministro de 3 gabinetes de control con rtu 2020 de…","objeto":"SUMINISTRO DE 3 GABINETES DE CONTROL CON RTU 2020 DE HONEYWELL, SISTEMA FOTOVOLTAICO, Y PUESTA EN MARCHA EN CAMPO","documento":"8000002296","estado":"Cerrado"},{"id":"2000-22","codigo":"2000-22","tipo":"Servicio","cliente":"PAREX","anio":2021,"nombre":"Parex - Servicio configuracion rtu","objeto":"SERVICIO CONFIGURACION RTU","documento":"15335","estado":"Cerrado"},{"id":"3008","codigo":"3008","tipo":"Proyecto","cliente":"PERENCO","anio":2019,"nombre":"Perenco - Ingenieria de detalle tendido de fibra optica","objeto":"INGENIERIA DE DETALLE TENDIDO DE FIBRA OPTICA","documento":"834057749","estado":"Cerrado"},{"id":"3011","codigo":"3011","tipo":"Proyecto","cliente":"PERENCO","anio":2020,"nombre":"Perenco - Adquisición de datos en pozo","objeto":"ADQUISICIÓN DE DATOS EN POZO","documento":"834062089","estado":"Cerrado"},{"id":"3016","codigo":"3016","tipo":"Proyecto","cliente":"PERENCO","anio":2020,"nombre":"Perenco - Sistema fotovoltaico 100w, 26 ah, entrega 24vdc","objeto":"SISTEMA FOTOVOLTAICO 100W, 26 AH, ENTREGA 24VDC","documento":"832044202","estado":"Cerrado"},{"id":"2012","codigo":"2012","tipo":"Servicio","cliente":"PERENCO","anio":2021,"nombre":"Perenco - Servicio de reparación de hmi en campo guando aasm2123","objeto":"SERVICIO DE REPARACIÓN DE HMI EN CAMPO GUANDO AASM2123","documento":"832046586 / 834067732","estado":"Cerrado"},{"id":"2000-38","codigo":"2000-38","tipo":"Servicio","cliente":"PERENCO","anio":2022,"nombre":"Perenco - Reparación + suministro de repuestos sistema Fire &…","objeto":"Reparación + suministro de repuestos sistema Fire & Gas Terraza 3. Se debe cargar el programa del equipo de cambio a nueva HMI. El cliente desea instalar los mismos programa que tenia el equipo anterior, se aclaro que el cliente debe suminstrar los instaladores.","documento":"832049981 / 834073285","estado":"Cerrado"},{"id":"2000-47","codigo":"2000-47","tipo":"Servicio","cliente":"PERENCO","anio":2023,"nombre":"Perenco - Servicio de reparación de hmi en campo guando","objeto":"SERVICIO DE REPARACIÓN DE HMI EN CAMPO GUANDO","documento":"832053610 / 834078320","estado":"Cerrado"},{"id":"3047","codigo":"3047","tipo":"Proyecto","cliente":"PROCESS","anio":2024,"nombre":"Democenter","objeto":"DEMOCENTER","documento":"N/A","estado":"Cerrado"},{"id":"2025","codigo":"2025","tipo":"Servicio","cliente":"Q-ENERGY","anio":2024,"nombre":"Q-Energy - Servicio verificacion y configuracion de transmisores…","objeto":"SERVICIO VERIFICACION Y CONFIGURACION DE TRANSMISORES DE PRESION","documento":"2402016","estado":"Cerrado"},{"id":"2033","codigo":"2033","tipo":"Servicio","cliente":"Q-ENERGY","anio":2024,"nombre":"Q-Energy - Servicio de Instalación de Transmisores De Presión Y…","objeto":"Servicio de Instalación de Transmisores De Presión Y RTU Servicio de desarrollo, implementación y puesta en marcha del SCADA del Tramo ORN Servicio De Instalación y configuración Sistema CCTV","documento":"2402016","estado":"Cerrado"},{"id":"2000-26","codigo":"2000-26","tipo":"Servicio","cliente":"RYM","anio":2022,"nombre":"Rym - Servicio de programación sistemas honeywell en campo…","objeto":"SERVICIO DE PROGRAMACIÓN SISTEMAS HONEYWELL EN CAMPO JACANA","documento":"16499","estado":"Cerrado"},{"id":"2000-28","codigo":"2000-28","tipo":"Servicio","cliente":"RYM","anio":2022,"nombre":"Rym - Servicio de programación sistemas honeywell en campo…","objeto":"SERVICIO DE PROGRAMACIÓN SISTEMAS HONEYWELL EN CAMPO JACANA","documento":"16674","estado":"Cerrado"},{"id":"2000-37","codigo":"2000-37","tipo":"Servicio","cliente":"RYM","anio":2022,"nombre":"Rym - Servicio jacana para señal shut down en sis","objeto":"SERVICIO JACANA PARA SEÑAL SHUT DOWN EN SIS","documento":"18766","estado":"Cerrado"},{"id":"3056","codigo":"3056","tipo":"Proyecto","cliente":"SAN PEDRO BIOENERGY","anio":2026,"nombre":"San Pedro Bioenergy - Servidor NTP","objeto":"Servicio de asistencia técnica para la configuración del servidor NTP en sitio. Incluye el soporte técnico para el montaje de la antena, configuración del puerto","documento":"OC 10005062","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado"},{"id":"2020","codigo":"2020","tipo":"Servicio","cliente":"SERINGTEC","anio":2022,"nombre":"Seringtec - LAN para conexión al DCS","objeto":"LAN para conexión al DCS | SERVICIO DE SIMULACIÓN HIDRÁULICA EN SOFTWARE SPS PARA ANÁLISIS HIDRÁULICO POLIDUCTO PUERTO SALGAR MANSILLA DE 10","documento":"CEN - 363","estado":"Cerrado","notas":"Unifica 2 registros de la base anterior con el mismo código"},{"id":"2027","codigo":"2027","tipo":"Servicio","cliente":"SERINGTEC","anio":2024,"nombre":"Seringtec - Synergi Pipeline Simulator Acceso al servidor en la…","objeto":"Synergi Pipeline Simulator Acceso al servidor en la nube por 15 días 24/7","documento":"SER-363-027-24","estado":"Cerrado"},{"id":"2029","codigo":"2029","tipo":"Servicio","cliente":"SERINGTEC","anio":2024,"nombre":"Seringtec - Solicitud de Software Synergi Pipeline Simulator","objeto":"Solicitud de Software Synergi Pipeline Simulator","documento":"SER-363-027A-24","estado":"Cerrado"},{"id":"2000-01","codigo":"2000-01","tipo":"Servicio","cliente":"STORK","anio":2019,"nombre":"Stork - Servicio especializado campo ocelote","objeto":"SERVICIO ESPECIALIZADO CAMPO OCELOTE","documento":"1000052813","estado":"Cerrado"},{"id":"2032","codigo":"2032","tipo":"Servicio","cliente":"SUMMUM","anio":2024,"nombre":"Summum - Ingenieria conceptual alternativas de calentamiento de…","objeto":"INGENIERIA CONCEPTUAL ALTERNATIVAS DE CALENTAMIENTO DE CRUDO EN ESTACIONES DE ODL","documento":"SC-OC 535","estado":"Cerrado"},{"id":"2035","codigo":"2035","tipo":"Servicio","cliente":"SUMMUM","anio":2024,"nombre":"Summum - Entrenamiento sofware synergi pipeline simulator…","objeto":"ENTRENAMIENTO SOFWARE SYNERGI PIPELINE SIMULATOR ESTÁNDAR","documento":"SC-OC GOI 29","estado":"Cerrado"},{"id":"2039","codigo":"2039","tipo":"Servicio","cliente":"SUMMUM","anio":2025,"nombre":"Summum - Desarrollo de la ingeniería conceptual para la…","objeto":"Desarrollo de la ingeniería conceptual para la revisión de los alivios en la estación corocora (Operada por ODL) mediante el modelamiento en synergi pipeline simulator (SPS)","documento":"SP-AB-037","estado":"Cerrado"},{"id":"3048","codigo":"3048","tipo":"Proyecto","cliente":"SURENERGY","anio":2024,"nombre":"Surenergy - Planta de gas 40 MMSCFD","objeto":"SISTEMA DE CONTROL PROYECTO INGENIERIA DE PROCESOS, TUBERÍAS, INSTRUMENTACIÓN Y CONTROL PARA UNA PLANTA DE 40 MMSCFD, INCLUYENDO EL RECIBO DE GAS EN 3 POZOS","documento":"OC 7537","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado"},{"id":"2040","codigo":"2040","tipo":"Servicio","cliente":"SURENERGY","anio":2025,"nombre":"Surenergy - Ingeniero en campo Sinú 9","objeto":"DES 887- SERVICIO INGENIERO EN CAMPO PARA EL CUMPLIMIENTO DE LAS OBLIGACIONES DEL CONTRATO DEL SERVICIO DE TRATAMIENTO Y COMPRESIÓN DE GAS DEL PROYECTO SÍNU 9.","documento":"OC 10981","estado":"Por ejecutar","estadoExplicito":true,"notas":"Estado en la base anterior: Pendiente a ejecutar 2 dias"},{"id":"2044","codigo":"2044","tipo":"Servicio","cliente":"SURENERGY","anio":2026,"nombre":"Surenergy - Mantenimiento servidores Sinú 9","objeto":"SERVICIO MANTENIMIENTO ORDENADORES Y SERVIDORES SINU-9","documento":"OC 12028","estado":"Por ejecutar","estadoExplicito":true,"notas":"Estado en la base anterior: Pendiente a ejecutar"},{"id":"2046","codigo":"2046","tipo":"Servicio","cliente":"SURENERGY","anio":2026,"nombre":"Surenergy - Mapa Modbus SCADA","objeto":"SERVICIO DE EXTRACCIÓN DEL MAPA MODBUS DEL SISTEMA SCADA Y GENERACIÓN DEL NUEVO MAPA MODBUS.","documento":"OC 13088","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado"},{"id":"2000-39","codigo":"2000-39","tipo":"Servicio","cliente":"SURTIGAS","anio":2022,"nombre":"Surtigas - Suministro de medidor de nivel para isotanques de…","objeto":"SUMINISTRO DE MEDIDOR DE NIVEL PARA ISOTANQUES DE ODORANTE TRANSMISOR DE NIVEL DE RADAR DE ONDA GUIADA MARCA HONEYWELL Y SERVICIO","documento":"890400869-9","estado":"Cerrado"},{"id":"2008","codigo":"2008","tipo":"Servicio","cliente":"TIPIEL","anio":2021,"nombre":"Tipiel - Prestación de servicios de simulación hidraulica –…","objeto":"PRESTACIÓN DE SERVICIOS DE SIMULACIÓN HIDRAULICA – SYNERGI PIPELINE","documento":"1393-000-OS-GPY-001- Rev. 0","estado":"Cerrado"},{"id":"2000-23","codigo":"2000-23","tipo":"Servicio","cliente":"UNIDUCTOS","anio":2021,"nombre":"Uniductos - Servicio ingeniero de instrumentación para la…","objeto":"Servicio ingeniero de instrumentación para la configuración de la velocidad del sonido como variable primaria (4-20 mA) en un medidor ultrasónico clamp-on marca Honeywell instalado en tubería de 16”","documento":"3838","estado":"Cerrado"},{"id":"3005","codigo":"3005","tipo":"Proyecto","cliente":"VERANO ENERGY","anio":2019,"nombre":"Verano Energy - Empalmes, pruebas y supervisión durante la instalación…","objeto":"EMPALMES, PRUEBAS Y SUPERVISIÓN DURANTE LA INSTALACIÓN DE LA FIBRA ÓPTICA DE LA LÍNEA DE FLUJO DE 14” EN EL BLOQUE LLANOS 32","documento":"OS-4600000103","estado":"Cerrado"},{"id":"3053","codigo":"3053","tipo":"Proyecto","cliente":"VESTOLIT (ORBIA)","anio":2025,"nombre":"Vestolit - Tablero CTR touchscreen","objeto":"SUMINISTRO TABLERO CTR -TOUCHSCREEN HONEYWELL","documento":"5900001556 5900001306","estado":"Cerrado","estadoExplicito":true,"notas":"Estado en la base anterior: Ejecutado"},{"id":"2019","codigo":"2019","tipo":"Servicio","cliente":"WORLEY","anio":2022,"nombre":"Worley - Servicio de simulación hidráulica en software sps para…","objeto":"SERVICIO DE SIMULACIÓN HIDRÁULICA EN SOFTWARE SPS PARA CORRIDA DE PRODUCTOS REFINADOS DIESEL-B2 Y GASOLINA MOTOR-GMR PARA LOS SISTEMAS DE TRANSPORTE SUTAMARCHAN -TOCANCIPA Y SUTAMARCHAN-MIRAFLORES-MONTERREY","documento":"822.419050-00130ECP-ODS-PRO-PROCESS","estado":"Cerrado"},{"id":"2000-12","codigo":"2000-12","tipo":"Servicio","cliente":"Y&V","anio":2020,"nombre":"Y&V - Proyecto de ingeniería infill 53 pozos de campo…","objeto":"PROYECTO DE INGENIERÍA INFILL 53 POZOS DE CAMPO MORICHE PARA LA DETECCIÓN DE RIESGOS POR EL MÉTODO HAZOP","documento":"YVSC-ODS-20-052","estado":"Cerrado"}];
+
+function estadoProy(p){ return p.estado || "En ejecución"; } // proyectos creados antes del rediseño siguen activos
+function tipoProy(p){
+  if(p.tipo) return p.tipo;
+  const c = String(p.codigo||"");
+  return c.startsWith("3") ? "Proyecto" : c.startsWith("0") ? "Interno" : "Servicio";
+}
+function proyActivo(p){ return ESTADOS_PROY_ACTIVOS.includes(estadoProy(p)); }
+function nextCodigo(tipo){
+  const re = tipo==="Proyecto" ? /^3\d{3}$/ : tipo==="Servicio" ? /^20\d{2}$/ : /^0\d{3}$/;
+  const base = tipo==="Proyecto" ? 3000 : tipo==="Servicio" ? 2000 : 0;
+  const nums = projectsList.map(p=>String(p.codigo||"").trim()).filter(c=>re.test(c)).map(Number);
+  return String((nums.length ? Math.max(...nums) : base) + 1).padStart(4,"0");
+}
+function diasHasta(fecha){
+  if(!fecha) return null;
+  const [y,m,d] = fecha.split("-").map(Number), [ty,tm,td] = todayStr().split("-").map(Number);
+  return Math.round((Date.UTC(y,m-1,d) - Date.UTC(ty,tm-1,td)) / 86400000);
+}
+function docLabel(p){
+  const doc = String(p.documento||"").trim(), t = p.docTipo||"";
+  if(!doc) return t || "—";
+  return t && !doc.toUpperCase().startsWith(t.toUpperCase()) ? `${t} ${doc}` : doc;
+}
+function ordenesAbiertas(p){ return (p.ordenes||[]).filter(o=>ORDEN_ABIERTA.includes(o.estado)); }
+function selOpts(list, val){ return list.map(x=>`<option value="${escH(x)}" ${x===val?"selected":""}>${escH(x)}</option>`).join(""); }
+
+function baseProyectosCargada(){
+  const ids = {}; projectsList.forEach(p=>{ if(p.importado) ids[p.id] = true; });
+  return PROYECTOS_HIST.every(h=>ids[h.id]);
+}
+function renderProyectos(){
+  const importado = baseProyectosCargada();
+  const vencen = projectsList.filter(p=>estadoProy(p)==="Contrato vigente" && p.fechaFin && diasHasta(p.fechaFin)<=DIAS_AVISO_VENCIMIENTO)
+    .sort((a,b)=>a.fechaFin.localeCompare(b.fechaFin));
+  const nOrdAb = projectsList.reduce((a,p)=>a+ordenesAbiertas(p).length, 0);
+  const pendPago = projectsList.filter(p=>estadoProy(p)==="Ejecutado pendiente de pago" || (p.ordenes||[]).some(o=>o.estado==="Ejecutada pendiente de pago"));
+  const nActivos = projectsList.filter(proyActivo).length;
+
+  let list = projectsList.slice();
+  if(projFiltroEstado==="activos") list = list.filter(proyActivo);
+  else if(projFiltroEstado!=="todos") list = list.filter(p=>estadoProy(p)===projFiltroEstado);
+  if(projFiltroTipo!=="todos") list = list.filter(p=>tipoProy(p)===projFiltroTipo);
+  list.sort((a,b)=> String(b.codigo).localeCompare(String(a.codigo), "es", {numeric:true}));
+  const q = projBusca.trim().toLowerCase();
+  const rows = list.map(p=>{
+    const search = [p.codigo,p.cliente,p.nombre,p.documento,p.objeto].join(" ").toLowerCase();
+    const est = estadoProy(p);
+    const oa = ordenesAbiertas(p).length;
+    const vence = est==="Contrato vigente" && p.fechaFin ? diasHasta(p.fechaFin) : null;
+    return `<tr class="prow ${p.id===projSel?"psel":""}" data-act="proj-open" data-id="${escH(p.id)}" data-search="${escH(search)}" ${q && !search.includes(q) ? 'style="display:none"' : ""}>
+      <td data-label="Código"><b>${escH(p.codigo)}</b>${p.duplicado?` <span class="badge b-bloq" title="Código repetido en la base anterior">dup</span>`:""}</td>
+      <td data-label="Cliente">${escH(p.cliente||"—")}</td>
+      <td data-label="Nombre">${escH(p.nombre||"—")}${oa?`<div class="hint" style="color:var(--primary)">${oa} orden(es) abierta(s)</div>`:""}${vence!=null && vence<=DIAS_AVISO_VENCIMIENTO?`<div class="hint" style="color:var(--bad)">${vence<0?"Venció":"Vence en "+vence+" días"}</div>`:""}</td>
+      <td data-label="Estado"><span class="badge ${ESTADO_PROY_BADGE[est]||"b-curso"}">${escH(est)}</span></td>
+      <td data-label="OC / OS">${escH(docLabel(p))}</td>
+      <td data-label="Año">${p.anio||"—"}</td>
+    </tr>`;
+  }).join("");
+
+  const estadoFiltroOpts = [["activos",`Activos (${nActivos})`],["todos",`Todos (${projectsList.length})`]]
+    .concat(ESTADOS_PROY.map(e=>[e, `${e} (${projectsList.filter(p=>estadoProy(p)===e).length})`]))
+    .map(([v,l])=>`<option value="${escH(v)}" ${v===projFiltroEstado?"selected":""}>${escH(l)}</option>`).join("");
+  const tipoFiltroOpts = [["todos","Todos los tipos"]].concat(TIPOS_PROY.map(t=>[t,t]))
+    .map(([v,l])=>`<option value="${v}" ${v===projFiltroTipo?"selected":""}>${l}</option>`).join("");
+
+  const alertas = [];
+  if(vencen.length) alertas.push(`<div class="palert bad"><b>Contratos por vencer:</b> ${vencen.map(p=>`<a data-act="proj-open" data-id="${escH(p.id)}">${escH(p.codigo)} ${escH(p.cliente||"")}</a> (${diasHasta(p.fechaFin)<0?"vencido":diasHasta(p.fechaFin)+" días"})`).join(" · ")}</div>`);
+  if(pendPago.length) alertas.push(`<div class="palert warn"><b>Pendientes de pago:</b> ${pendPago.map(p=>`<a data-act="proj-open" data-id="${escH(p.id)}">${escH(p.codigo)} ${escH(p.cliente||"")}</a>`).join(" · ")}</div>`);
+  if(nOrdAb) alertas.push(`<div class="palert info"><b>${nOrdAb} orden(es) abierta(s)</b> en contratos vigentes.</div>`);
+
+  const detalle = projSel ? renderProjDetalle() : "";
+  return `${detalle}
+  <div class="card">
+    <div class="admin-note">Registro de proyectos y servicios. La numeración es automática por tipo: <b>3xxx</b> Proyectos · <b>20xx</b> Servicios · <b>0xxx</b> Internos (capacitaciones y demos). Los ingenieros solo ven en su lista los proyectos <b>Por ejecutar, En ejecución, Pendientes, Bloqueados</b> y <b>Contratos vigentes</b>. Toca un proyecto para ver su detalle, sus órdenes y las horas registradas.</div>
+    ${!importado ? `<div class="palert info" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span style="flex:1 1 240px"><b>Base de proyectos y servicios:</b> ${PROYECTOS_HIST.length} registros listos para cargar (los proyectos que ya tienes conservan su nombre).</span>
+        <button class="primary" id="btn_proj_import" style="margin-top:0;width:auto" ${importingProj?"disabled":""}>${importingProj ? `Cargando… <span id="import_prog">${importingProj}</span>` : "Cargar base de proyectos"}</button>
+      </div>` : ""}
+    ${alertas.join("")}
+    <div class="ptools">
+      <input id="proj_busca" placeholder="Buscar código, cliente, nombre u OC…" value="${escH(projBusca)}">
+      <select id="proj_f_estado">${estadoFiltroOpts}</select>
+      <select id="proj_f_tipo">${tipoFiltroOpts}</select>
+      <button class="primary" data-act="proj-new" style="margin-top:0;width:auto">+ Nuevo proyecto</button>
+    </div>
+    <div class="hint" id="proj_count" style="margin-bottom:6px">${list.length} proyecto(s)</div>
+    ${rows ? cbTable(["Código","Cliente","Nombre","Estado","OC / OS","Año"], rows) : `<div class="empty">No hay proyectos con este filtro.</div>`}
+    <div class="msg ${formMsg?formMsgType:""}" id="msgbox3" style="margin-top:10px">${formMsg}</div>
+  </div>`;
 }
 
-async function doDeleteProject(i){
+function renderProjDetalle(){
+  const isNew = projSel === "__new__";
+  const p = isNew ? { tipo:"Proyecto", codigo: nextCodigo("Proyecto"), anio: Number(todayStr().slice(0,4)), estado:"Por ejecutar" } : projectsList.find(x=>x.id===projSel);
+  if(!p) return "";
+  const est = estadoProy(p);
+  const clientes = [...new Set(projectsList.map(x=>x.cliente).filter(Boolean))].sort();
+  const confirmingDel = pendingConfirm && pendingConfirm.type==="deleteProj" && pendingConfirm.key===p.id;
+  const form = `
+    <div class="row2">
+      <div><label>Tipo</label><select id="pf_tipo" ${isNew?"":"disabled"}>${TIPOS_PROY.map(t=>`<option value="${t}" ${t===tipoProy(p)?"selected":""}>${t} (${TIPO_PROY_DESC[t]})</option>`).join("")}</select></div>
+      <div><label>Número ${isNew?'<span class="hint">(automático, puedes cambiarlo)</span>':''}</label><input id="pf_codigo" value="${escH(p.codigo)}" data-auto="1" ${isNew?"":"disabled"}></div>
+    </div>
+    <div class="row2">
+      <div><label>Cliente</label><input id="pf_cliente" list="pf_clientes" value="${escH(p.cliente||"")}" placeholder="Ej: ECOPETROL"><datalist id="pf_clientes">${clientes.map(c=>`<option value="${escH(c)}">`).join("")}</datalist></div>
+      <div><label>Año</label><input type="number" id="pf_anio" value="${p.anio||""}" min="2000" max="2100"></div>
+    </div>
+    <label>Nombre corto <span class="hint">(lo que ven los ingenieros al registrar horas)</span></label>
+    <input id="pf_nombre" value="${escH(p.nombre||"")}" placeholder="Ej: Hocol - Computadores de flujo">
+    <label>Objeto</label>
+    <textarea id="pf_objeto" placeholder="Descripción completa del alcance">${escH(p.objeto||"")}</textarea>
+    <div class="row2">
+      <div><label>Documento</label><select id="pf_doctipo"><option value="">—</option>${selOpts(DOC_TIPOS, p.docTipo)}</select></div>
+      <div><label>Número de OC / OS / contrato</label><input id="pf_documento" value="${escH(p.documento||"")}" placeholder="Ej: OC 110042502"></div>
+    </div>
+    <label>Estado</label>
+    <select id="pf_estado">${ESTADOS_PROY.map(e=>`<option value="${escH(e)}" ${e===est?"selected":""}>${escH(e)} — ${escH(ESTADOS_PROY_DESC[e])}</option>`).join("")}</select>
+    <div class="row2">
+      <div><label>Fecha de inicio</label><input type="date" id="pf_inicio" value="${p.fechaInicio||""}"></div>
+      <div><label>Fecha de fin ${est==="Contrato vigente"?'<span class="hint">(vigencia del contrato)</span>':""}</label><input type="date" id="pf_fin" value="${p.fechaFin||""}"></div>
+    </div>
+    <label>Notas y seguimiento <span class="hint">(pagos pendientes, novedades, contactos…)</span></label>
+    <textarea id="pf_notas">${escH(p.notas||"")}</textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center">
+      <button class="primary" data-act="proj-save" style="margin-top:0;flex:1 1 160px">${isNew?"Crear proyecto":"Guardar cambios"}</button>
+      ${isNew ? "" : confirmingDel
+        ? `<span class="confirmrow">¿Eliminar ${escH(p.codigo)}? Las horas registradas no se borran. <button class="tiny bad" data-act="confirm-del-proj" data-id="${escH(p.id)}">Sí, eliminar</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
+        : `<button class="tiny bad" data-act="ask-del-proj" data-id="${escH(p.id)}">Eliminar proyecto</button>`}
+    </div>`;
+  return `
+  <div class="card" id="proj_detalle">
+    <div class="cbhead">
+      <h3 style="margin:0">${isNew ? "Nuevo proyecto" : `${escH(p.codigo)} · ${escH(p.nombre||p.cliente||"")}`}</h3>
+      <button class="tiny" data-act="proj-close">Cerrar</button>
+    </div>
+    ${!isNew && p.duplicado ? `<div class="palert bad">Este código está repetido en la base anterior con otro cliente. Revisa las notas.</div>` : ""}
+    ${form}
+    ${isNew ? "" : renderOrdenes(p) + renderProjHoras(p)}
+  </div>`;
+}
+
+function renderOrdenes(p){
+  const ords = (p.ordenes||[]).slice().sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  const ed = editingOrden && editingOrden.proj===p.id ? (ords.find(o=>o.id===editingOrden.id) || {}) : {};
+  const rows = ords.map(o=>{
+    const confirming = pendingConfirm && pendingConfirm.type==="deleteOrden" && pendingConfirm.key===o.id;
+    return `<tr>
+      <td data-label="Orden"><b>${escH(o.numero||"—")}</b></td>
+      <td data-label="Fecha">${o.fecha||"—"}</td>
+      <td data-label="Descripción">${escH(o.descripcion||"—")}${o.nota?`<div class="hint">${escH(o.nota)}</div>`:""}</td>
+      <td data-label="Días">${o.dias!=null && o.dias!=="" ? fmtN(o.dias)+" d" : "—"}</td>
+      <td data-label="Programada">${o.fechaProgramada||"—"}</td>
+      <td data-label="Estado"><select class="orden_estado" data-proj="${escH(p.id)}" data-orden="${escH(o.id)}">${selOpts(ESTADOS_ORDEN, o.estado)}</select></td>
+      <td data-label="">${confirming
+        ? `<span class="confirmrow">¿Eliminar? <button class="tiny bad" data-act="confirm-del-orden" data-proj="${escH(p.id)}" data-orden="${escH(o.id)}">Sí</button><button class="tiny" data-act="cancel-confirm">No</button></span>`
+        : `<button class="tiny" data-act="orden-edit" data-proj="${escH(p.id)}" data-orden="${escH(o.id)}">Editar</button> <button class="tiny bad" data-act="ask-del-orden" data-orden="${escH(o.id)}">Eliminar</button>`}</td>
+    </tr>`;
+  }).join("");
+  const abiertas = ordenesAbiertas(p).length;
+  const diasTot = ords.filter(o=>o.estado!=="Cancelada").reduce((a,o)=>a+(Number(o.dias)||0),0);
+  const editando = !!(editingOrden && editingOrden.proj===p.id && editingOrden.id);
+  const formOrden = `
+    <div class="ordenform">
+      <div class="hint" style="margin-bottom:6px"><b>${editando ? "Editando orden "+escH(ed.numero||"") : "Nueva orden"}</b> — cada vez que el cliente solicita un servicio sobre este contrato (OC/OS, días solicitados y cuándo se ejecuta).</div>
+      <div class="row2">
+        <div><label>Número OC / OS</label><input id="of_numero" value="${escH(ed.numero||"")}" placeholder="Ej: OS-1234"></div>
+        <div><label>Fecha de la orden</label><input type="date" id="of_fecha" value="${ed.fecha||todayStr()}"></div>
+      </div>
+      <div class="row2">
+        <div><label>Días de servicio solicitados</label><input type="number" id="of_dias" min="0" step="0.5" value="${ed.dias!=null?ed.dias:""}"></div>
+        <div><label>Fecha programada de ejecución</label><input type="date" id="of_programada" value="${ed.fechaProgramada||""}"></div>
+      </div>
+      <label>Descripción</label><input id="of_descripcion" value="${escH(ed.descripcion||"")}" placeholder="Ej: 6 días de mantenimiento preventivo">
+      <div class="row2">
+        <div><label>Estado</label><select id="of_estado">${selOpts(ESTADOS_ORDEN, ed.estado||"Solicitada")}</select></div>
+        <div><label>Nota</label><input id="of_nota" value="${escH(ed.nota||"")}" placeholder="Opcional"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="primary" data-act="orden-save" data-proj="${escH(p.id)}" style="margin-top:0;flex:1">${editando?"Guardar orden":"Agregar orden"}</button>
+        ${editando ? `<button class="secondary" data-act="orden-cancel" style="flex:1">Cancelar</button>` : ""}
+      </div>
+    </div>`;
+  const titulo = `Órdenes del contrato (${ords.length}${abiertas?` · ${abiertas} abierta(s)`:""}${diasTot?` · ${fmtN(diasTot)} días solicitados`:""})`;
+  const inner = `${rows ? cbTable(["Orden","Fecha","Descripción","Días","Programada","Estado",""], rows) : `<div class="hint">Sin órdenes registradas.</div>`}${formOrden}`;
+  // En contratos vigentes las órdenes se muestran abiertas; en los demás quedan plegadas
+  if(estadoProy(p)==="Contrato vigente" || ords.length || editando) return `<h4 class="cbh">${titulo}</h4>${inner}`;
+  return cbFold("ordenes-"+p.id, "Órdenes del contrato (para contratos a solicitud del cliente)", inner);
+}
+
+function renderProjHoras(p){
+  const h = projHoras[p.id];
+  let inner;
+  if(!h || h.loading) inner = `<div class="hint">Cargando horas registradas…</div>`;
+  else if(h.error) inner = `<div class="msg bad" style="display:block">No se pudieron cargar las horas: ${escH(h.error)}</div>`;
+  else if(!h.rows.length) inner = `<div class="hint">Todavía no hay horas registradas en este proyecto.</div>`;
+  else inner = cbTable(["Ingeniero","Horas","Extra","Registros","Desde","Hasta"], h.rows.map(r=>`<tr>
+      <td data-label="Ingeniero"><b>${escH(r.engineer)}</b></td><td data-label="Horas">${fmtN(r.horas)} h</td>
+      <td data-label="Extra">${r.extra?fmtN(r.extra)+" h":"—"}</td><td data-label="Registros">${r.n}</td>
+      <td data-label="Desde">${r.desde}</td><td data-label="Hasta">${r.hasta}</td></tr>`).join("")
+      + `<tr><td data-label="Total"><b>Total</b></td><td data-label="Horas"><b>${fmtN(h.total)} h</b></td><td data-label="Extra">${h.extra?fmtN(h.extra)+" h":"—"}</td><td data-label="Registros">${h.n}</td><td data-label=""></td><td data-label=""></td></tr>`);
+  return `<h4 class="cbh" style="display:flex;justify-content:space-between;align-items:center;gap:8px">Horas registradas por los ingenieros <button class="tiny" data-act="proj-horas" data-id="${escH(p.id)}">Actualizar</button></h4>
+    ${p.duplicado ? `<div class="hint" style="margin-bottom:6px">Código repetido: las horas registradas con el ${escH(p.codigo)} se muestran en ambos proyectos.</div>` : ""}
+    ${inner}`;
+}
+
+async function loadProjHoras(p){
+  const cod = String(p.codigo||"").trim();
+  if(!db || !cod) return;
+  projHoras[p.id] = { loading:true };
+  try{
+    // Las horas guardan el proyecto como "código - nombre": se buscan por el código para no perderlas si cambia el nombre
+    const [a, b] = await Promise.all([
+      db.collection("activities").where("proyecto", ">=", cod+" - ").where("proyecto", "<=", cod+" - ").limit(5000).get(),
+      db.collection("activities").where("proyecto", "==", cod).limit(5000).get()
+    ]);
+    const by = {};
+    let total = 0, extra = 0, n = 0;
+    a.docs.concat(b.docs).map(d=>d.data()).forEach(d=>{
+      if(AUSENCIA_TYPES.includes(d.tipoHora)) return; // vacaciones, incapacidades, etc. no son horas del proyecto
+      const h = Number(d.horas)||0;
+      const r = by[d.engineer] || (by[d.engineer] = { engineer:d.engineer, horas:0, extra:0, n:0, desde:d.fecha||"", hasta:d.fecha||"" });
+      r.horas += h; r.n++; total += h; n++;
+      if(d.tipoHora==="Extra"){ r.extra += h; extra += h; }
+      if(d.fecha && (!r.desde || d.fecha < r.desde)) r.desde = d.fecha;
+      if(d.fecha && d.fecha > r.hasta) r.hasta = d.fecha;
+    });
+    projHoras[p.id] = { rows: Object.values(by).sort((x,y)=>y.horas-x.horas), total, extra, n };
+  }catch(err){
+    projHoras[p.id] = { error: err.message||err.code };
+  }
+  if(view==="proyectos" && projSel===p.id) render();
+}
+
+function leerProjForm(){
+  const v = id=>{ const el=document.getElementById(id); return el ? el.value.trim() : ""; };
+  return { tipo:v("pf_tipo"), codigo:v("pf_codigo"), cliente:v("pf_cliente"), anio: v("pf_anio") ? Number(v("pf_anio")) : null,
+    nombre:v("pf_nombre"), objeto:v("pf_objeto"), docTipo:v("pf_doctipo"), documento:v("pf_documento"),
+    estado:v("pf_estado"), fechaInicio:v("pf_inicio"), fechaFin:v("pf_fin"), notas:v("pf_notas") };
+}
+async function saveProject(){
+  const isNew = projSel==="__new__";
+  const f = leerProjForm();
+  if(!f.nombre){ showMsg("Escribe el nombre corto del proyecto.", "bad"); return; }
+  if(f.fechaInicio && f.fechaFin && f.fechaFin < f.fechaInicio){ showMsg("La fecha de fin no puede ser antes de la de inicio.", "bad"); return; }
+  try{
+    if(isNew){
+      if(!f.codigo){ showMsg("El número del proyecto no puede quedar vacío.", "bad"); return; }
+      const id = sanitizeId(f.codigo);
+      if(projectsList.some(p=>p.id===id)){ showMsg(`El número ${f.codigo} ya existe. Usa otro.`, "bad"); return; }
+      await db.doc("config_projects/"+id).set({ ...f, ordenes:[], createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
+      projSel = id; projFiltroEstado = "todos";
+      showMsg(`Proyecto ${f.codigo} creado.`, "ok");
+      loadProjHoras({ id, codigo:f.codigo });
+    } else {
+      const p = projectsList.find(x=>x.id===projSel); if(!p) return;
+      const { id, ...resto } = p;
+      delete f.tipo; delete f.codigo; // el tipo y el número no cambian una vez creado
+      await db.doc("config_projects/"+p.id).set({ ...resto, ...f, updatedAt:new Date().toISOString() });
+      showMsg("Cambios guardados.", "ok");
+    }
+  }catch(err){ showMsg("No se pudo guardar: " + (err.message||err.code), "bad"); }
+}
+async function deleteProject(id){
   pendingConfirm = null;
-  const p = projectsList[i];
-  try{ await db.doc("config_projects/"+p.id).delete(); showMsg("Proyecto eliminado de la lista.", "ok"); }
+  try{ await db.doc("config_projects/"+id).delete(); projSel = ""; showMsg("Proyecto eliminado. Las horas registradas no se borraron.", "ok"); }
   catch(err){ showMsg("No se pudo eliminar: " + (err.message||err.code), "bad"); render(); }
 }
+async function saveOrdenes(projId, ordenes, msg){
+  try{ await db.doc("config_projects/"+projId).update({ ordenes, updatedAt:new Date().toISOString() }); if(msg) showMsg(msg, "ok"); }
+  catch(err){ showMsg("No se pudo guardar la orden: " + (err.message||err.code), "bad"); render(); }
+}
+async function saveOrden(projId){
+  const p = projectsList.find(x=>x.id===projId); if(!p) return;
+  const v = id=>{ const el=document.getElementById(id); return el ? el.value.trim() : ""; };
+  const o = { numero:v("of_numero"), fecha:v("of_fecha"), dias: v("of_dias")==="" ? null : Number(v("of_dias")), fechaProgramada:v("of_programada"),
+    descripcion:v("of_descripcion"), estado:v("of_estado") || "Solicitada", nota:v("of_nota") };
+  if(!o.numero && !o.descripcion){ showMsg("Escribe al menos el número de la OC/OS o una descripción.", "bad"); return; }
+  const ordenes = (p.ordenes||[]).slice();
+  const editId = editingOrden && editingOrden.proj===projId ? editingOrden.id : null;
+  if(editId){
+    const i = ordenes.findIndex(x=>x.id===editId);
+    if(i>=0) ordenes[i] = { ...ordenes[i], ...o };
+  } else {
+    ordenes.push({ id: "o"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), ...o, createdAt:new Date().toISOString() });
+  }
+  editingOrden = null;
+  await saveOrdenes(projId, ordenes, editId ? "Orden actualizada." : "Orden agregada.");
+}
+async function updateOrdenEstado(projId, ordenId, estado){
+  const p = projectsList.find(x=>x.id===projId); if(!p) return;
+  const ordenes = (p.ordenes||[]).map(o=> o.id===ordenId ? { ...o, estado } : o);
+  await saveOrdenes(projId, ordenes, `Orden en estado "${estado}".`);
+}
+async function deleteOrden(projId, ordenId){
+  pendingConfirm = null;
+  const p = projectsList.find(x=>x.id===projId); if(!p) return;
+  if(editingOrden && editingOrden.id===ordenId) editingOrden = null;
+  await saveOrdenes(projId, (p.ordenes||[]).filter(o=>o.id!==ordenId), "Orden eliminada.");
+}
 
-async function addProject(){
-  const codigo = document.getElementById("new_pr_codigo").value.trim();
-  const nombre = document.getElementById("new_pr_nombre").value.trim();
-  if(!codigo){ showMsg("Escribe un código de proyecto.", "bad"); return; }
-  const id = sanitizeId(codigo);
+// Carga la base histórica de proyectos y servicios en un solo clic
+function docTipoDe(doc){
+  const d = String(doc||"").trim().toUpperCase();
+  if(!d || d==="N/A") return "";
+  if(d.startsWith("OC")) return "OC";
+  if(d.startsWith("OS")) return "OS";
+  if(d.startsWith("CONTRATO") || /^C[A-Z]*[-\s]?\d/.test(d)) return "Contrato";
+  return "";
+}
+async function importProyectosHist(){
+  if(importingProj || baseProyectosCargada()) return;
+  importingProj = `0/${PROYECTOS_HIST.length}`; render();
+  const existentes = {}; projectsList.forEach(p=>{ existentes[p.id] = p; });
+  const ahora = new Date().toISOString();
+  // Si una carga anterior se interrumpió, solo se cargan los que faltan
+  const docs = PROYECTOS_HIST.filter(h=>!(existentes[h.id] && existentes[h.id].importado)).map(h=>{
+    const base = { codigo:h.codigo, tipo:h.tipo, cliente:h.cliente||"", anio:h.anio||null, nombre:h.nombre||"", objeto:h.objeto||"",
+      docTipo:docTipoDe(h.documento), documento:(h.documento && h.documento!=="N/A") ? h.documento : "", estado:h.estado,
+      fechaInicio:"", fechaFin:"", notas:h.notas||"", ordenes:[], duplicado:!!h.duplicado, importado:true, createdAt:ahora, updatedAt:ahora };
+    const ex = existentes[h.id];
+    if(ex){
+      // Ya existía en la app: conserva su nombre y todo lo que tenga; queda activo salvo que la base diga otra cosa
+      Object.keys(ex).forEach(k=>{ if(k!=="id" && ex[k]!=null && ex[k]!=="" && !(Array.isArray(ex[k]) && !ex[k].length)) base[k] = ex[k]; });
+      base.estado = ex.estado || (h.estadoExplicito ? h.estado : "En ejecución");
+      base.importado = true; base.updatedAt = ahora;
+    }
+    return { id:h.id, data:base };
+  });
+  // Los proyectos de la app que no están en la base quedan como estaban (activos), solo se marcan para no repetir la carga
+  let hechos = 0;
   try{
-    const existing = await db.doc("config_projects/"+id).get();
-    if(existing.exists){ showMsg("Ese código ya existe.", "bad"); return; }
-    await db.doc("config_projects/"+id).set({ codigo, nombre });
-    showMsg("Proyecto agregado.", "ok");
-    const ci = document.getElementById("new_pr_codigo"); if(ci) ci.value = "";
-    const ni = document.getElementById("new_pr_nombre"); if(ni) ni.value = "";
+    for(let i=0; i<docs.length; i+=20){
+      await Promise.all(docs.slice(i, i+20).map(d=>db.doc("config_projects/"+d.id).set(d.data)));
+      hechos = Math.min(docs.length, i+20);
+      importingProj = `${hechos}/${docs.length}`;
+      const el = document.getElementById("import_prog"); if(el) el.textContent = importingProj;
+    }
+    importingProj = false;
+    showMsg(`Base cargada: ${docs.length} proyectos y servicios. Los activos ya aparecen a los ingenieros.`, "ok");
+    projFiltroEstado = "activos";
+    render();
   }catch(err){
-    showMsg("No se pudo agregar: " + (err.message||err.code), "bad");
+    importingProj = false;
+    showMsg(`La carga se detuvo en ${hechos}/${docs.length}: ${err.message||err.code}. Vuelve a presionar el botón para completarla.`, "bad");
+    render();
   }
 }
+
 
 // ---------- Compensatorios y Bonos de campo (dos pestañas, solo admin) ----------
 // Reglas acordadas:
